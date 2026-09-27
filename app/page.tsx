@@ -63,8 +63,9 @@ export default function Home() {
   const currentSong = songs[currentIndex];
 
   /*
-   * CARREGA A API DO YOUTUBE
+   * CARREGAR API DO YOUTUBE
    */
+
   useEffect(() => {
     if (window.YT) {
       createPlayer();
@@ -96,71 +97,94 @@ export default function Home() {
   }, []);
 
   /*
-   * CRIA O PLAYER DO YOUTUBE
+   * CRIAR PLAYER
    */
+
   function createPlayer() {
     if (!playerContainerRef.current || !window.YT) {
       return;
     }
 
-    playerRef.current = new window.YT.Player(playerContainerRef.current, {
-      height: "100%",
-      width: "100%",
-      videoId: currentSong.youtubeId,
+    playerRef.current = new window.YT.Player(
+      playerContainerRef.current,
+      {
+        height: "100%",
+        width: "100%",
+        videoId: currentSong.youtubeId,
 
-      playerVars: {
-        playsinline: 1,
-        controls: 1,
-        rel: 0,
-      },
-
-      events: {
-        onReady: (event: any) => {
-          setDuration(event.target.getDuration());
-
-          timerRef.current = setInterval(() => {
-            if (!playerRef.current) {
-              return;
-            }
-
-            const time = playerRef.current.getCurrentTime();
-            const total = playerRef.current.getDuration();
-
-            setCurrentTime(time);
-
-            if (total > 0) {
-              setDuration(total);
-            }
-          }, 250);
+        playerVars: {
+          playsinline: 1,
+          controls: 1,
+          rel: 0,
         },
 
-        onStateChange: (event: any) => {
-          if (event.data === window.YT.PlayerState.PLAYING) {
-            setPlaying(true);
-          }
+        events: {
+          onReady: (event: any) => {
+            setDuration(event.target.getDuration());
 
-          if (event.data === window.YT.PlayerState.PAUSED) {
-            setPlaying(false);
-          }
+            if (timerRef.current) {
+              clearInterval(timerRef.current);
+            }
 
-          if (event.data === window.YT.PlayerState.ENDED) {
-            setPlaying(false);
-            nextSong();
-          }
+            timerRef.current = setInterval(() => {
+              if (!playerRef.current) {
+                return;
+              }
+
+              const time =
+                playerRef.current.getCurrentTime();
+
+              const total =
+                playerRef.current.getDuration();
+
+              setCurrentTime(time);
+
+              if (total > 0) {
+                setDuration(total);
+              }
+            }, 250);
+          },
+
+          onStateChange: (event: any) => {
+            if (
+              event.data ===
+              window.YT.PlayerState.PLAYING
+            ) {
+              setPlaying(true);
+            }
+
+            if (
+              event.data ===
+              window.YT.PlayerState.PAUSED
+            ) {
+              setPlaying(false);
+            }
+
+            if (
+              event.data ===
+              window.YT.PlayerState.ENDED
+            ) {
+              setPlaying(false);
+              nextSong();
+            }
+          },
         },
-      },
-    });
+      }
+    );
   }
 
   /*
-   * TROCA O VÍDEO QUANDO A MÚSICA MUDA
+   * TROCAR VÍDEO
    */
+
   useEffect(() => {
     if (!playerRef.current || !currentSong) {
       return;
     }
 
-    playerRef.current.loadVideoById(currentSong.youtubeId);
+    playerRef.current.loadVideoById(
+      currentSong.youtubeId
+    );
 
     setCurrentTime(0);
     setDuration(0);
@@ -168,7 +192,9 @@ export default function Home() {
 
     const durationTimer = setTimeout(() => {
       if (playerRef.current) {
-        setDuration(playerRef.current.getDuration());
+        setDuration(
+          playerRef.current.getDuration()
+        );
       }
     }, 1000);
 
@@ -178,15 +204,42 @@ export default function Home() {
   }, [currentIndex]);
 
   /*
+   * PLAY / PAUSE
+   */
+
+  function togglePlay() {
+    if (!playerRef.current || !window.YT) {
+      return;
+    }
+
+    const state =
+      playerRef.current.getPlayerState();
+
+    if (
+      state ===
+        window.YT.PlayerState.PLAYING ||
+      state ===
+        window.YT.PlayerState.BUFFERING
+    ) {
+      playerRef.current.pauseVideo();
+    } else {
+      playerRef.current.playVideo();
+    }
+  }
+
+  /*
    * PRÓXIMA MÚSICA
    */
+
   function nextSong() {
     setPlaying(false);
     setCurrentTime(0);
     setDuration(0);
 
     if (currentIndex < songs.length - 1) {
-      setCurrentIndex((index) => index + 1);
+      setCurrentIndex(
+        (index) => index + 1
+      );
     } else {
       setCurrentIndex(0);
     }
@@ -195,17 +248,21 @@ export default function Home() {
   /*
    * CURTIR
    */
+
   function likeSong() {
     if (!currentSong) {
       return;
     }
 
     setLikedSongs((current) => {
-      const alreadyLiked = current.some(
-        (song) =>
-          song.title === currentSong.title &&
-          song.artist === currentSong.artist
-      );
+      const alreadyLiked =
+        current.some(
+          (song) =>
+            song.title ===
+              currentSong.title &&
+            song.artist ===
+              currentSong.artist
+        );
 
       if (alreadyLiked) {
         return current;
@@ -220,20 +277,28 @@ export default function Home() {
   /*
    * PASSAR
    */
+
   function passSong() {
     nextSong();
   }
 
   /*
-   * FORMATA O TEMPO
+   * FORMATAR TEMPO
    */
+
   function formatTime(seconds: number) {
-    if (!Number.isFinite(seconds) || seconds < 0) {
+    if (
+      !Number.isFinite(seconds) ||
+      seconds < 0
+    ) {
       return "0:00";
     }
 
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
+    const minutes =
+      Math.floor(seconds / 60);
+
+    const remainingSeconds =
+      Math.floor(seconds % 60);
 
     return `${minutes}:${remainingSeconds
       .toString()
@@ -242,7 +307,10 @@ export default function Home() {
 
   const progress =
     duration > 0
-      ? Math.min((currentTime / duration) * 100, 100)
+      ? Math.min(
+          (currentTime / duration) * 100,
+          100
+        )
       : 0;
 
   if (!currentSong) {
@@ -251,31 +319,39 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#09090b] text-white">
+
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-6">
 
         {/* HEADER */}
 
         <header className="flex items-center justify-between">
+
           <div>
+
             <h1 className="text-2xl font-bold tracking-tight">
-              Music<span className="text-pink-500">Swipe</span>
+              Music
+              <span className="text-pink-500">
+                Swipe
+              </span>
             </h1>
 
             <p className="mt-1 text-sm text-zinc-500">
               Descubra músicas que combinam com você
             </p>
+
           </div>
 
           <div className="rounded-full border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm text-zinc-300">
             ❤️ {likedSongs.length} curtidas
           </div>
+
         </header>
 
         {/* CONTEÚDO */}
 
         <div className="flex flex-1 flex-col items-center justify-center gap-10 py-10 lg:flex-row">
 
-          {/* CARD DA MÚSICA */}
+          {/* CARD */}
 
           <section className="w-full max-w-sm">
 
@@ -292,33 +368,33 @@ export default function Home() {
 
                 {/* COMPATIBILIDADE */}
 
-                <div className="absolute left-4 top-4 z-10 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
+                <div className="absolute left-4 top-4 z-20 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
                   {currentSong.match}% compatível
                 </div>
 
-              </div>
+                {/* INFORMAÇÕES SOBRE O VÍDEO */}
 
-              {/* INFORMAÇÕES DA MÚSICA */}
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/80 to-transparent px-6 pb-20 pt-24">
 
-              <div className="px-5 pt-5">
+                  <p className="text-sm text-zinc-300">
+                    {currentSong.album}
+                  </p>
 
-                <p className="text-sm text-zinc-400">
-                  {currentSong.album}
-                </p>
+                  <h2 className="mt-1 text-3xl font-bold leading-tight">
+                    {currentSong.title}
+                  </h2>
 
-                <h2 className="mt-1 text-3xl font-bold leading-tight">
-                  {currentSong.title}
-                </h2>
+                  <p className="mt-1 text-lg text-zinc-300">
+                    {currentSong.artist}
+                  </p>
 
-                <p className="mt-1 text-lg text-zinc-300">
-                  {currentSong.artist}
-                </p>
+                </div>
 
               </div>
 
               {/* BARRA DE PROGRESSO */}
 
-              <div className="px-5 pb-5 pt-5">
+              <div className="px-5 pt-5">
 
                 <div className="h-1.5 overflow-hidden rounded-full bg-zinc-700">
 
@@ -332,16 +408,40 @@ export default function Home() {
                 </div>
 
                 <div className="mt-2 flex justify-between text-xs text-zinc-500">
-                  <span>{formatTime(currentTime)}</span>
 
-                  <span>{formatTime(duration)}</span>
+                  <span>
+                    {formatTime(currentTime)}
+                  </span>
+
+                  <span>
+                    {formatTime(duration)}
+                  </span>
+
                 </div>
+
+              </div>
+
+              {/* PLAY / PAUSE */}
+
+              <div className="px-5 py-5">
+
+                <button
+                  onClick={togglePlay}
+                  aria-label={
+                    playing
+                      ? "Pausar"
+                      : "Reproduzir"
+                  }
+                  className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white text-xl text-black shadow-lg transition hover:scale-105 hover:bg-zinc-200"
+                >
+                  {playing ? "❚❚" : "▶"}
+                </button>
 
               </div>
 
             </div>
 
-            {/* BOTÕES */}
+            {/* BOTÕES DE AÇÃO */}
 
             <div className="mt-6 flex items-center justify-center gap-6">
 
@@ -378,12 +478,12 @@ export default function Home() {
             </div>
 
             <p className="mt-5 text-center text-xs text-zinc-600">
-              ❌ Passar &nbsp; • &nbsp; ❤️ Curtir &nbsp; • &nbsp; Controles do YouTube para reprodução
+              ❌ Passar &nbsp; • &nbsp; ❤️ Curtir &nbsp; • &nbsp; ▶ Play/Pause
             </p>
 
           </section>
 
-          {/* LISTA DE CURTIDAS */}
+          {/* CURTIDAS */}
 
           <aside className="w-full max-w-sm lg:w-80">
 
@@ -419,38 +519,36 @@ export default function Home() {
 
                 <div className="mt-4 space-y-3">
 
-                  {likedSongs.map((song) => (
+                  {likedSongs.map(
+                    (song) => (
 
-                    <div
-                      key={`${song.title}-${song.artist}`}
-                      className="flex items-center gap-3 rounded-xl bg-zinc-800/70 p-2"
-                    >
+                      <div
+                        key={`${song.title}-${song.artist}`}
+                        className="flex items-center gap-3 rounded-xl bg-zinc-800/70 p-2"
+                      >
 
-                      {/* MINIATURA */}
+                        <img
+                          src={`https://i.ytimg.com/vi/${song.youtubeId}/default.jpg`}
+                          alt=""
+                          className="h-12 w-12 rounded-lg object-cover"
+                        />
 
-                      <img
-                        src={`https://i.ytimg.com/vi/${song.youtubeId}/default.jpg`}
-                        alt=""
-                        className="h-12 w-12 rounded-lg object-cover"
-                      />
+                        <div className="min-w-0">
 
-                      {/* TEXTO */}
+                          <p className="truncate text-sm font-medium">
+                            {song.title}
+                          </p>
 
-                      <div className="min-w-0">
+                          <p className="truncate text-xs text-zinc-500">
+                            {song.artist}
+                          </p>
 
-                        <p className="truncate text-sm font-medium">
-                          {song.title}
-                        </p>
-
-                        <p className="truncate text-xs text-zinc-500">
-                          {song.artist}
-                        </p>
+                        </div>
 
                       </div>
 
-                    </div>
-
-                  ))}
+                    )
+                  )}
 
                 </div>
 
@@ -459,8 +557,12 @@ export default function Home() {
               {/* SPOTIFY */}
 
               <button
-                disabled={likedSongs.length === 0}
-                onClick={() => setSpotifyMessage(true)}
+                disabled={
+                  likedSongs.length === 0
+                }
+                onClick={() =>
+                  setSpotifyMessage(true)
+                }
                 className="mt-5 w-full rounded-xl bg-white px-4 py-3 text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
               >
                 Criar playlist no Spotify
@@ -495,6 +597,7 @@ export default function Home() {
         </footer>
 
       </div>
+
     </main>
   );
 }
