@@ -118,6 +118,7 @@ export default function Home() {
           rel: 0,
           iv_load_policy: 3,
           disablekb: 1,
+          modestbranding: 1,
         },
 
         events: {
@@ -246,14 +247,13 @@ export default function Home() {
     const clickPosition =
       event.clientX - rect.left;
 
-    const percentage =
-      Math.max(
-        0,
-        Math.min(
-          clickPosition / rect.width,
-          1
-        )
-      );
+    const percentage = Math.max(
+      0,
+      Math.min(
+        clickPosition / rect.width,
+        1
+      )
+    );
 
     const newTime =
       percentage * duration;
@@ -388,13 +388,13 @@ export default function Home() {
 
         <div className="flex flex-1 flex-col items-center justify-center gap-10 py-10 lg:flex-row">
 
-          {/* CARD */}
+          {/* CARD DA MÚSICA */}
 
           <section className="w-full max-w-sm">
 
             <div className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl">
 
-              {/* ÁREA DO VÍDEO */}
+              {/* VÍDEO */}
 
               <div className="relative aspect-square w-full overflow-hidden bg-black">
 
@@ -403,13 +403,19 @@ export default function Home() {
                   className="absolute inset-0 h-full w-full"
                 />
 
+                {/* CAMADA TRANSPARENTE
+                    IMPEDE O MOUSE DE INTERAGIR
+                    COM OS CONTROLES DO YOUTUBE */}
+
+                <div className="absolute inset-0 z-10" />
+
                 {/* COMPATIBILIDADE */}
 
                 <div className="absolute left-4 top-4 z-30 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
                   {currentSong.match}% compatível
                 </div>
 
-                {/* INFORMAÇÕES NO FINAL DO VÍDEO */}
+                {/* INFORMAÇÕES DA MÚSICA */}
 
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/80 to-transparent px-6 pb-5 pt-32">
 
@@ -435,7 +441,7 @@ export default function Home() {
 
                 <div
                   onClick={seekVideo}
-                  className="group h-5 cursor-pointer flex items-center"
+                  className="group flex h-5 cursor-pointer items-center"
                   title="Clique para mudar a posição da música"
                 >
 
