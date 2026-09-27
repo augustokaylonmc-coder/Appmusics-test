@@ -97,7 +97,7 @@ export default function Home() {
   }, []);
 
   /*
-   * CRIAR PLAYER
+   * CRIAR PLAYER DO YOUTUBE
    */
 
   function createPlayer() {
@@ -114,8 +114,10 @@ export default function Home() {
 
         playerVars: {
           playsinline: 1,
-          controls: 1,
+          controls: 0,
           rel: 0,
+          iv_load_policy: 3,
+          disablekb: 1,
         },
 
         events: {
@@ -228,6 +230,43 @@ export default function Home() {
   }
 
   /*
+   * CLICAR NA LINHA DO TEMPO
+   */
+
+  function seekVideo(
+    event: React.MouseEvent<HTMLDivElement>
+  ) {
+    if (!playerRef.current || duration <= 0) {
+      return;
+    }
+
+    const rect =
+      event.currentTarget.getBoundingClientRect();
+
+    const clickPosition =
+      event.clientX - rect.left;
+
+    const percentage =
+      Math.max(
+        0,
+        Math.min(
+          clickPosition / rect.width,
+          1
+        )
+      );
+
+    const newTime =
+      percentage * duration;
+
+    playerRef.current.seekTo(
+      newTime,
+      true
+    );
+
+    setCurrentTime(newTime);
+  }
+
+  /*
    * PRÓXIMA MÚSICA
    */
 
@@ -258,10 +297,8 @@ export default function Home() {
       const alreadyLiked =
         current.some(
           (song) =>
-            song.title ===
-              currentSong.title &&
-            song.artist ===
-              currentSong.artist
+            song.title === currentSong.title &&
+            song.artist === currentSong.artist
         );
 
       if (alreadyLiked) {
@@ -357,7 +394,7 @@ export default function Home() {
 
             <div className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl">
 
-              {/* VÍDEO */}
+              {/* ÁREA DO VÍDEO */}
 
               <div className="relative aspect-square w-full overflow-hidden bg-black">
 
@@ -368,13 +405,13 @@ export default function Home() {
 
                 {/* COMPATIBILIDADE */}
 
-                <div className="absolute left-4 top-4 z-20 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
+                <div className="absolute left-4 top-4 z-30 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
                   {currentSong.match}% compatível
                 </div>
 
-                {/* INFORMAÇÕES SOBRE O VÍDEO */}
+                {/* INFORMAÇÕES NO FINAL DO VÍDEO */}
 
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/80 to-transparent px-6 pb-20 pt-24">
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/80 to-transparent px-6 pb-5 pt-32">
 
                   <p className="text-sm text-zinc-300">
                     {currentSong.album}
@@ -392,22 +429,30 @@ export default function Home() {
 
               </div>
 
-              {/* BARRA DE PROGRESSO */}
+              {/* LINHA DO TEMPO */}
 
               <div className="px-5 pt-5">
 
-                <div className="h-1.5 overflow-hidden rounded-full bg-zinc-700">
+                <div
+                  onClick={seekVideo}
+                  className="group h-5 cursor-pointer flex items-center"
+                  title="Clique para mudar a posição da música"
+                >
 
-                  <div
-                    className="h-full rounded-full bg-pink-500 transition-all"
-                    style={{
-                      width: `${progress}%`,
-                    }}
-                  />
+                  <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-700 transition-all group-hover:h-2">
+
+                    <div
+                      className="absolute left-0 top-0 h-full rounded-full bg-pink-500"
+                      style={{
+                        width: `${progress}%`,
+                      }}
+                    />
+
+                  </div>
 
                 </div>
 
-                <div className="mt-2 flex justify-between text-xs text-zinc-500">
+                <div className="mt-1 flex justify-between text-xs text-zinc-500">
 
                   <span>
                     {formatTime(currentTime)}
@@ -441,11 +486,9 @@ export default function Home() {
 
             </div>
 
-            {/* BOTÕES DE AÇÃO */}
+            {/* AÇÕES */}
 
             <div className="mt-6 flex items-center justify-center gap-6">
-
-              {/* PASSAR */}
 
               <button
                 onClick={passSong}
@@ -455,8 +498,6 @@ export default function Home() {
                 ❌
               </button>
 
-              {/* CURTIR */}
-
               <button
                 onClick={likeSong}
                 aria-label="Curtir música"
@@ -464,8 +505,6 @@ export default function Home() {
               >
                 ❤️
               </button>
-
-              {/* PRÓXIMA */}
 
               <button
                 onClick={nextSong}
