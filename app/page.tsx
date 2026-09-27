@@ -6,7 +6,6 @@ type Song = {
   title: string;
   artist: string;
   album: string;
-  cover: string;
   match: number;
   youtubeId: string;
 };
@@ -16,7 +15,6 @@ const songs: Song[] = [
     title: "Blinding Lights",
     artist: "The Weeknd",
     album: "After Hours",
-    cover: "https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg",
     match: 96,
     youtubeId: "4NRXx6U8ABQ",
   },
@@ -24,7 +22,6 @@ const songs: Song[] = [
     title: "Midnight City",
     artist: "M83",
     album: "Hurry Up, We're Dreaming",
-    cover: "https://i.ytimg.com/vi/dX3k_QDnzHE/hqdefault.jpg",
     match: 91,
     youtubeId: "dX3k_QDnzHE",
   },
@@ -32,7 +29,6 @@ const songs: Song[] = [
     title: "Instant Crush",
     artist: "Daft Punk",
     album: "Random Access Memories",
-    cover: "https://i.ytimg.com/vi/a5uQMwRMHcs/hqdefault.jpg",
     match: 89,
     youtubeId: "a5uQMwRMHcs",
   },
@@ -40,7 +36,6 @@ const songs: Song[] = [
     title: "Electric Feel",
     artist: "MGMT",
     album: "Oracular Spectacular",
-    cover: "https://i.ytimg.com/vi/MmZexg8sxyk/hqdefault.jpg",
     match: 87,
     youtubeId: "MmZexg8sxyk",
   },
@@ -67,7 +62,9 @@ export default function Home() {
 
   const currentSong = songs[currentIndex];
 
-  // Carrega a API do YouTube
+  /*
+   * CARREGA A API DO YOUTUBE
+   */
   useEffect(() => {
     if (window.YT) {
       createPlayer();
@@ -80,8 +77,10 @@ export default function Home() {
 
     if (!existingScript) {
       const script = document.createElement("script");
+
       script.src = "https://www.youtube.com/iframe_api";
       script.async = true;
+
       document.body.appendChild(script);
     }
 
@@ -96,32 +95,41 @@ export default function Home() {
     };
   }, []);
 
+  /*
+   * CRIA O PLAYER DO YOUTUBE
+   */
   function createPlayer() {
-    if (!playerContainerRef.current || !window.YT) return;
+    if (!playerContainerRef.current || !window.YT) {
+      return;
+    }
 
     playerRef.current = new window.YT.Player(playerContainerRef.current, {
-      height: "220",
+      height: "100%",
       width: "100%",
       videoId: currentSong.youtubeId,
+
       playerVars: {
         playsinline: 1,
         controls: 1,
         rel: 0,
       },
+
       events: {
         onReady: (event: any) => {
           setDuration(event.target.getDuration());
 
           timerRef.current = setInterval(() => {
-            if (playerRef.current) {
-              const time = playerRef.current.getCurrentTime();
-              const total = playerRef.current.getDuration();
+            if (!playerRef.current) {
+              return;
+            }
 
-              setCurrentTime(time);
+            const time = playerRef.current.getCurrentTime();
+            const total = playerRef.current.getDuration();
 
-              if (total > 0) {
-                setDuration(total);
-              }
+            setCurrentTime(time);
+
+            if (total > 0) {
+              setDuration(total);
             }
           }, 250);
         },
@@ -144,11 +152,16 @@ export default function Home() {
     });
   }
 
-  // Troca o vídeo quando muda a música
+  /*
+   * TROCA O VÍDEO QUANDO A MÚSICA MUDA
+   */
   useEffect(() => {
-    if (!playerRef.current || !currentSong) return;
+    if (!playerRef.current || !currentSong) {
+      return;
+    }
 
     playerRef.current.loadVideoById(currentSong.youtubeId);
+
     setCurrentTime(0);
     setDuration(0);
     setPlaying(false);
@@ -159,24 +172,14 @@ export default function Home() {
       }
     }, 1000);
 
-    return () => clearTimeout(durationTimer);
+    return () => {
+      clearTimeout(durationTimer);
+    };
   }, [currentIndex]);
 
-  function togglePlay() {
-    if (!playerRef.current) return;
-
-    const state = playerRef.current.getPlayerState();
-
-    if (
-      state === window.YT.PlayerState.PLAYING ||
-      state === window.YT.PlayerState.BUFFERING
-    ) {
-      playerRef.current.pauseVideo();
-    } else {
-      playerRef.current.playVideo();
-    }
-  }
-
+  /*
+   * PRÓXIMA MÚSICA
+   */
   function nextSong() {
     setPlaying(false);
     setCurrentTime(0);
@@ -189,17 +192,22 @@ export default function Home() {
     }
   }
 
+  /*
+   * CURTIR
+   */
   function likeSong() {
-    if (!currentSong) return;
+    if (!currentSong) {
+      return;
+    }
 
     setLikedSongs((current) => {
-      if (
-        current.some(
-          (song) =>
-            song.title === currentSong.title &&
-            song.artist === currentSong.artist
-        )
-      ) {
+      const alreadyLiked = current.some(
+        (song) =>
+          song.title === currentSong.title &&
+          song.artist === currentSong.artist
+      );
+
+      if (alreadyLiked) {
         return current;
       }
 
@@ -209,10 +217,16 @@ export default function Home() {
     nextSong();
   }
 
+  /*
+   * PASSAR
+   */
   function passSong() {
     nextSong();
   }
 
+  /*
+   * FORMATA O TEMPO
+   */
   function formatTime(seconds: number) {
     if (!Number.isFinite(seconds) || seconds < 0) {
       return "0:00";
@@ -221,11 +235,15 @@ export default function Home() {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.floor(seconds % 60);
 
-    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+    return `${minutes}:${remainingSeconds
+      .toString()
+      .padStart(2, "0")}`;
   }
 
   const progress =
-    duration > 0 ? Math.min((currentTime / duration) * 100, 100) : 0;
+    duration > 0
+      ? Math.min((currentTime / duration) * 100, 100)
+      : 0;
 
   if (!currentSong) {
     return null;
@@ -234,7 +252,9 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#09090b] text-white">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-6">
+
         {/* HEADER */}
+
         <header className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
@@ -251,76 +271,82 @@ export default function Home() {
           </div>
         </header>
 
-        {/* CONTENT */}
+        {/* CONTEÚDO */}
+
         <div className="flex flex-1 flex-col items-center justify-center gap-10 py-10 lg:flex-row">
-          {/* MUSIC CARD */}
+
+          {/* CARD DA MÚSICA */}
+
           <section className="w-full max-w-sm">
+
             <div className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-              {/* COVER */}
-              <div className="relative aspect-square w-full overflow-hidden bg-zinc-800">
-                <img
-                  src={currentSong.cover}
-                  alt={`Capa de ${currentSong.album}`}
-                  className="h-full w-full object-cover"
+
+              {/* VÍDEO */}
+
+              <div className="relative aspect-square w-full overflow-hidden bg-black">
+
+                <div
+                  ref={playerContainerRef}
+                  className="absolute inset-0 h-full w-full"
                 />
 
-                <div className="absolute left-4 top-4 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
+                {/* COMPATIBILIDADE */}
+
+                <div className="absolute left-4 top-4 z-10 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
                   {currentSong.match}% compatível
                 </div>
 
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent p-6 pt-20">
-                  <p className="text-sm text-zinc-300">
-                    {currentSong.album}
-                  </p>
-
-                  <h2 className="mt-1 text-3xl font-bold">
-                    {currentSong.title}
-                  </h2>
-
-                  <p className="mt-1 text-lg text-zinc-300">
-                    {currentSong.artist}
-                  </p>
-                </div>
               </div>
 
-              {/* YOUTUBE PLAYER */}
-              <div className="p-4">
-                <div className="overflow-hidden rounded-xl bg-black">
-                  <div ref={playerContainerRef} />
-                </div>
+              {/* INFORMAÇÕES DA MÚSICA */}
 
-                <p className="mt-2 text-center text-[10px] text-zinc-600">
-                  Reprodução via YouTube
+              <div className="px-5 pt-5">
+
+                <p className="text-sm text-zinc-400">
+                  {currentSong.album}
                 </p>
+
+                <h2 className="mt-1 text-3xl font-bold leading-tight">
+                  {currentSong.title}
+                </h2>
+
+                <p className="mt-1 text-lg text-zinc-300">
+                  {currentSong.artist}
+                </p>
+
               </div>
 
-              {/* PLAYER */}
-              <div className="px-5 pb-5">
-                <div className="mb-4">
-                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-700">
-                    <div
-                      className="h-full rounded-full bg-pink-500 transition-all"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
+              {/* BARRA DE PROGRESSO */}
 
-                  <div className="mt-2 flex justify-between text-xs text-zinc-500">
-                    <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(duration)}</span>
-                  </div>
+              <div className="px-5 pb-5 pt-5">
+
+                <div className="h-1.5 overflow-hidden rounded-full bg-zinc-700">
+
+                  <div
+                    className="h-full rounded-full bg-pink-500 transition-all"
+                    style={{
+                      width: `${progress}%`,
+                    }}
+                  />
+
                 </div>
 
-                <button
-                  onClick={togglePlay}
-                  className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white text-xl text-black transition hover:scale-105"
-                >
-                  {playing ? "❚❚" : "▶"}
-                </button>
+                <div className="mt-2 flex justify-between text-xs text-zinc-500">
+                  <span>{formatTime(currentTime)}</span>
+
+                  <span>{formatTime(duration)}</span>
+                </div>
+
               </div>
+
             </div>
 
-            {/* ACTIONS */}
+            {/* BOTÕES */}
+
             <div className="mt-6 flex items-center justify-center gap-6">
+
+              {/* PASSAR */}
+
               <button
                 onClick={passSong}
                 aria-label="Passar música"
@@ -328,6 +354,8 @@ export default function Home() {
               >
                 ❌
               </button>
+
+              {/* CURTIR */}
 
               <button
                 onClick={likeSong}
@@ -337,6 +365,8 @@ export default function Home() {
                 ❤️
               </button>
 
+              {/* PRÓXIMA */}
+
               <button
                 onClick={nextSong}
                 aria-label="Próxima música"
@@ -344,46 +374,70 @@ export default function Home() {
               >
                 ⏭️
               </button>
+
             </div>
 
             <p className="mt-5 text-center text-xs text-zinc-600">
-              ❌ Passar &nbsp; • &nbsp; ❤️ Curtir &nbsp; • &nbsp; ▶ Play/Pause
+              ❌ Passar &nbsp; • &nbsp; ❤️ Curtir &nbsp; • &nbsp; Controles do YouTube para reprodução
             </p>
+
           </section>
 
-          {/* LIKED SONGS */}
+          {/* LISTA DE CURTIDAS */}
+
           <aside className="w-full max-w-sm lg:w-80">
+
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+
               <div className="flex items-center justify-between">
-                <h3 className="font-semibold">Suas curtidas</h3>
+
+                <h3 className="font-semibold">
+                  Suas curtidas
+                </h3>
 
                 <span className="text-sm text-zinc-500">
                   {likedSongs.length}
                 </span>
+
               </div>
 
               {likedSongs.length === 0 ? (
+
                 <div className="py-12 text-center">
-                  <div className="text-4xl">🎵</div>
+
+                  <div className="text-4xl">
+                    🎵
+                  </div>
 
                   <p className="mt-3 text-sm text-zinc-400">
                     Suas músicas curtidas aparecerão aqui.
                   </p>
+
                 </div>
+
               ) : (
+
                 <div className="mt-4 space-y-3">
+
                   {likedSongs.map((song) => (
+
                     <div
                       key={`${song.title}-${song.artist}`}
                       className="flex items-center gap-3 rounded-xl bg-zinc-800/70 p-2"
                     >
+
+                      {/* MINIATURA */}
+
                       <img
-                        src={song.cover}
+                        src={`https://i.ytimg.com/vi/${song.youtubeId}/default.jpg`}
                         alt=""
                         className="h-12 w-12 rounded-lg object-cover"
                       />
 
+                      {/* TEXTO */}
+
                       <div className="min-w-0">
+
                         <p className="truncate text-sm font-medium">
                           {song.title}
                         </p>
@@ -391,11 +445,18 @@ export default function Home() {
                         <p className="truncate text-xs text-zinc-500">
                           {song.artist}
                         </p>
+
                       </div>
+
                     </div>
+
                   ))}
+
                 </div>
+
               )}
+
+              {/* SPOTIFY */}
 
               <button
                 disabled={likedSongs.length === 0}
@@ -406,22 +467,33 @@ export default function Home() {
               </button>
 
               {spotifyMessage && (
+
                 <div className="mt-3 rounded-xl border border-zinc-700 bg-zinc-800 p-3 text-center text-xs text-zinc-300">
+
                   O Spotify ainda não está conectado.
+
                   <br />
+
                   <span className="text-zinc-500">
                     A integração será adicionada na próxima etapa.
                   </span>
+
                 </div>
+
               )}
+
             </div>
+
           </aside>
+
         </div>
 
         {/* FOOTER */}
+
         <footer className="pb-2 text-center text-xs text-zinc-700">
           MusicSwipe • Descoberta musical
         </footer>
+
       </div>
     </main>
   );
