@@ -53,27 +53,64 @@ export default function Home() {
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
 
   const playerRef = useRef<any>(null);
-  const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const currentSong = songs[currentIndex];
 
+  /* -----------------------------
+     TIMER DA BARRA DE PROGRESSO
+  ----------------------------- */
+
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const startTimer = () => {
+    stopTimer();
+
+    timerRef.current = setInterval(() => {
+      const player = playerRef.current;
+
+      if (!player) return;
+
+      const duration = player.getDuration?.();
+      const current = player.getCurrentTime?.();
+
+      if (
+        typeof duration === "number" &&
+        duration > 0 &&
+        typeof current === "number"
+      ) {
+        setProgress((current / duration) * 100);
+      }
+    }, 250);
+  };
+
+  /* -----------------------------
+     CRIA PLAYER
+  ----------------------------- */
+
   useEffect(() => {
     const createPlayer = () => {
-      if (!window.YT || !window.YT.Player) return;
+      if (!window.YT?.Player) return;
 
       if (playerRef.current) {
         playerRef.current.destroy();
+        playerRef.current = null;
       }
+
+      setIsPlaying(false);
+      setProgress(0);
 
       playerRef.current = new window.YT.Player("youtube-player", {
         videoId: currentSong.youtubeId,
 
         playerVars: {
-          autoplay: 1,
           playsinline: 1,
           controls: 0,
           rel: 0,
@@ -84,35 +121,34 @@ export default function Home() {
 
         events: {
           onReady: (event: any) => {
-            const videoDuration = event.target.getDuration();
-
-            setDuration(videoDuration || 0);
-            setCurrentTime(0);
+            setIsPlaying(false);
             setProgress(0);
 
-            // O navegador pode bloquear autoplay.
-            // Nesse caso, o usuário pode apertar Play.
-            try {
-              event.target.playVideo();
-            } catch {
-              setIsPlaying(false);
-            }
+            /*
+             * Não forçamos autoplay.
+             * O navegador pode bloquear autoplay.
+             */
+            event.target.pauseVideo();
           },
 
           onStateChange: (event: any) => {
-            if (event.data === window.YT.PlayerState.PLAYING) {
+            const state = event.data;
+
+            if (state === window.YT.PlayerState.PLAYING) {
               setIsPlaying(true);
-              startProgressTimer();
+              startTimer();
             }
 
-            if (event.data === window.YT.PlayerState.PAUSED) {
+            if (state === window.YT.PlayerState.PAUSED) {
               setIsPlaying(false);
-              stopProgressTimer();
+              stopTimer();
             }
 
-            if (event.data === window.YT.PlayerState.ENDED) {
+            if (state === window.YT.PlayerState.ENDED) {
               setIsPlaying(false);
-              stopProgressTimer();
+              stopTimer();
+              setProgress(0);
+
               nextSong();
             }
           },
@@ -120,16 +156,16 @@ export default function Home() {
       });
     };
 
-    if (window.YT && window.YT.Player) {
+    if (window.YT?.Player) {
       createPlayer();
     } else {
       window.onYouTubeIframeAPIReady = createPlayer;
 
-      const scriptExists = document.querySelector(
+      const existingScript = document.querySelector(
         'script[src="https://www.youtube.com/iframe_api"]'
       );
 
-      if (!scriptExists) {
+      if (!existingScript) {
         const script = document.createElement("script");
 
         script.src = "https://www.youtube.com/iframe_api";
@@ -140,7 +176,7 @@ export default function Home() {
     }
 
     return () => {
-      stopProgressTimer();
+      stopTimer();
 
       if (playerRef.current) {
         playerRef.current.destroy();
@@ -149,44 +185,81 @@ export default function Home() {
     };
   }, [currentIndex]);
 
-  const startProgressTimer = () => {
-    stopProgressTimer();
-
-    progressTimerRef.current = setInterval(() => {
-      if (!playerRef.current) return;
-
-      const current = playerRef.current.getCurrentTime?.() || 0;
-      const total = playerRef.current.getDuration?.() || 0;
-
-      if (total > 0) {
-        setCurrentTime(current);
-        setDuration(total);
-        setProgress((current / total) * 100);
-      }
-    }, 250);
-  };
-
-  const stopProgressTimer = () => {
-    if (progressTimerRef.current) {
-      clearInterval(progressTimerRef.current);
-      progressTimerRef.current = null;
-    }
-  };
+  /* -----------------------------
+     PLAY / PAUSE
+  ----------------------------- */
 
   const togglePlay = () => {
-    if (!playerRef.current) return;
+    const player = playerRef.current;
 
-    const state = playerRef.current.getPlayerState();
+    if (!player || !window.YT) return;
+
+    const state = player.getPlayerState();
 
     if (state === window.YT.PlayerState.PLAYING) {
-      playerRef.current.pauseVideo();
+      player.pauseVideo();
+      setIsPlaying(false);
     } else {
-      playerRef.current.playVideo();
+      player.playVideo();
+      setIsPlaying(true);
     }
   };
 
+  /* -----------------------------
+     PRÓXIMA MÚSICA
+  ----------------------------- */
+
+  const nextSong = () => {
+    stopTimer();
+
+    setProgress(0);
+    setIsPlaying(false);
+
+    setCurrentIndex((index) => {
+      if (index >= songs.length - 1) {
+        return 0;
+      }
+
+      return index + 1;
+    });
+  };
+
+  /* -----------------------------
+     LIKE
+  ----------------------------- */
+
+  const likeSong = () => {
+    const alreadyLiked = likedSongs.some(
+      (song) => song.youtubeId === currentSong.youtubeId
+    );
+
+    if (!alreadyLiked) {
+      setLikedSongs((songs) => [...songs, currentSong]);
+    }
+
+    nextSong();
+  };
+
+  /* -----------------------------
+     PASSAR
+  ----------------------------- */
+
+  const passSong = () => {
+    nextSong();
+  };
+
+  /* -----------------------------
+     SEEK
+  ----------------------------- */
+
   const seek = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!playerRef.current) return;
+    const player = playerRef.current;
+
+    if (!player) return;
+
+    const duration = player.getDuration?.();
+
+    if (!duration || duration <= 0) return;
 
     const rect = event.currentTarget.getBoundingClientRect();
 
@@ -197,69 +270,21 @@ export default function Home() {
       Math.min(1, position / rect.width)
     );
 
-    const total = playerRef.current.getDuration?.() || 0;
+    player.seekTo(duration * percentage, true);
 
-    if (total > 0) {
-      playerRef.current.seekTo(total * percentage, true);
-
-      setProgress(percentage * 100);
-      setCurrentTime(total * percentage);
-    }
+    setProgress(percentage * 100);
   };
 
-  const nextSong = () => {
-    setProgress(0);
-    setCurrentTime(0);
-    setDuration(0);
-    setIsPlaying(false);
-
-    setCurrentIndex((previous) => {
-      if (previous >= songs.length - 1) {
-        return 0;
-      }
-
-      return previous + 1;
-    });
-  };
-
-  const likeSong = () => {
-    const alreadyLiked = likedSongs.some(
-      (song) => song.youtubeId === currentSong.youtubeId
-    );
-
-    if (!alreadyLiked) {
-      setLikedSongs((previous) => [
-        ...previous,
-        currentSong,
-      ]);
-    }
-
-    nextSong();
-  };
-
-  const passSong = () => {
-    nextSong();
-  };
-
-  const formatTime = (seconds: number) => {
-    if (!seconds || !Number.isFinite(seconds)) {
-      return "0:00";
-    }
-
-    const minutes = Math.floor(seconds / 60);
-
-    const remainingSeconds = Math.floor(seconds % 60);
-
-    return `${minutes}:${remainingSeconds
-      .toString()
-      .padStart(2, "0")}`;
-  };
+  /* -----------------------------
+     RENDER
+  ----------------------------- */
 
   return (
     <main className="min-h-screen bg-black text-white">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-5 py-6">
 
         {/* HEADER */}
+
         <header className="mb-8 flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">
@@ -276,10 +301,12 @@ export default function Home() {
           </div>
         </header>
 
-        {/* ÁREA PRINCIPAL */}
+        {/* CONTEÚDO */}
+
         <div className="grid flex-1 gap-8 lg:grid-cols-[1fr_320px]">
 
           {/* PLAYER */}
+
           <section className="flex flex-col">
 
             <div className="relative aspect-video w-full overflow-hidden rounded-3xl bg-zinc-950 shadow-2xl">
@@ -289,10 +316,12 @@ export default function Home() {
                 className="absolute inset-0 h-full w-full"
               />
 
-              {/* Bloqueia os controles originais do YouTube */}
+              {/* Impede que os controles do YouTube apareçam/interajam */}
+
               <div className="absolute inset-0 z-10" />
 
-              {/* INFORMAÇÕES DA MÚSICA */}
+              {/* INFORMAÇÕES */}
+
               <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/70 to-transparent px-7 pb-7 pt-24">
 
                 <div className="flex items-end justify-between gap-4">
@@ -323,9 +352,11 @@ export default function Home() {
             </div>
 
             {/* CONTROLES */}
+
             <div className="mt-5">
 
-              {/* BARRA DE PROGRESSO */}
+              {/* BARRA */}
+
               <div
                 onClick={seek}
                 className="group h-2 w-full cursor-pointer rounded-full bg-zinc-800"
@@ -338,21 +369,12 @@ export default function Home() {
                 />
               </div>
 
-              {/* TEMPO */}
-              <div className="mt-2 flex justify-between text-xs text-zinc-600">
-                <span>
-                  {formatTime(currentTime)}
-                </span>
-
-                <span>
-                  {formatTime(duration)}
-                </span>
-              </div>
-
               {/* BOTÕES */}
+
               <div className="mt-5 flex items-center justify-center gap-5">
 
                 {/* PASSAR */}
+
                 <button
                   onClick={passSong}
                   className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-xl text-zinc-400 transition hover:border-zinc-600 hover:text-white"
@@ -362,6 +384,7 @@ export default function Home() {
                 </button>
 
                 {/* PLAY / PAUSE */}
+
                 <button
                   onClick={togglePlay}
                   className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-xl text-black transition hover:scale-105"
@@ -371,6 +394,7 @@ export default function Home() {
                 </button>
 
                 {/* LIKE */}
+
                 <button
                   onClick={likeSong}
                   className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-xl text-zinc-400 transition hover:border-zinc-600 hover:text-white"
@@ -389,6 +413,7 @@ export default function Home() {
           </section>
 
           {/* CURTIDAS */}
+
           <aside className="rounded-3xl border border-zinc-900 bg-zinc-950 p-5">
 
             <div className="mb-5 flex items-center justify-between">
@@ -457,7 +482,6 @@ export default function Home() {
             )}
 
           </aside>
-
         </div>
       </div>
     </main>
