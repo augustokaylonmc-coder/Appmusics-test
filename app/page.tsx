@@ -53,6 +53,8 @@ export default function Home() {
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
 
   const playerRef = useRef<any>(null);
   const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -60,33 +62,18 @@ export default function Home() {
   const currentSong = songs[currentIndex];
 
   useEffect(() => {
-    const loadYouTubeAPI = () => {
-      if (window.YT && window.YT.Player) {
-        createPlayer();
-        return;
-      }
-
-      window.onYouTubeIframeAPIReady = createPlayer;
-
-      const existingScript = document.querySelector(
-        'script[src="https://www.youtube.com/iframe_api"]'
-      );
-
-      if (!existingScript) {
-        const script = document.createElement("script");
-        script.src = "https://www.youtube.com/iframe_api";
-        document.body.appendChild(script);
-      }
-    };
-
     const createPlayer = () => {
+      if (!window.YT || !window.YT.Player) return;
+
       if (playerRef.current) {
         playerRef.current.destroy();
       }
 
       playerRef.current = new window.YT.Player("youtube-player", {
         videoId: currentSong.youtubeId,
+
         playerVars: {
+          autoplay: 1,
           playsinline: 1,
           controls: 0,
           rel: 0,
@@ -94,26 +81,38 @@ export default function Home() {
           disablekb: 1,
           modestbranding: 1,
         },
+
         events: {
-          onReady: () => {
-            setIsPlaying(false);
+          onReady: (event: any) => {
+            const videoDuration = event.target.getDuration();
+
+            setDuration(videoDuration || 0);
+            setCurrentTime(0);
             setProgress(0);
+
+            // O navegador pode bloquear autoplay.
+            // Nesse caso, o usuário pode apertar Play.
+            try {
+              event.target.playVideo();
+            } catch {
+              setIsPlaying(false);
+            }
           },
+
           onStateChange: (event: any) => {
             if (event.data === window.YT.PlayerState.PLAYING) {
               setIsPlaying(true);
               startProgressTimer();
             }
 
-            if (
-              event.data === window.YT.PlayerState.PAUSED ||
-              event.data === window.YT.PlayerState.ENDED
-            ) {
+            if (event.data === window.YT.PlayerState.PAUSED) {
               setIsPlaying(false);
               stopProgressTimer();
             }
 
             if (event.data === window.YT.PlayerState.ENDED) {
+              setIsPlaying(false);
+              stopProgressTimer();
               nextSong();
             }
           },
@@ -121,7 +120,24 @@ export default function Home() {
       });
     };
 
-    loadYouTubeAPI();
+    if (window.YT && window.YT.Player) {
+      createPlayer();
+    } else {
+      window.onYouTubeIframeAPIReady = createPlayer;
+
+      const scriptExists = document.querySelector(
+        'script[src="https://www.youtube.com/iframe_api"]'
+      );
+
+      if (!scriptExists) {
+        const script = document.createElement("script");
+
+        script.src = "https://www.youtube.com/iframe_api";
+        script.async = true;
+
+        document.body.appendChild(script);
+      }
+    }
 
     return () => {
       stopProgressTimer();
@@ -139,11 +155,13 @@ export default function Home() {
     progressTimerRef.current = setInterval(() => {
       if (!playerRef.current) return;
 
-      const duration = playerRef.current.getDuration?.();
-      const currentTime = playerRef.current.getCurrentTime?.();
+      const current = playerRef.current.getCurrentTime?.() || 0;
+      const total = playerRef.current.getDuration?.() || 0;
 
-      if (duration && duration > 0) {
-        setProgress((currentTime / duration) * 100);
+      if (total > 0) {
+        setCurrentTime(current);
+        setDuration(total);
+        setProgress((current / total) * 100);
       }
     }, 250);
   };
@@ -171,22 +189,28 @@ export default function Home() {
     if (!playerRef.current) return;
 
     const rect = event.currentTarget.getBoundingClientRect();
-    const clickPosition = event.clientX - rect.left;
+
+    const position = event.clientX - rect.left;
+
     const percentage = Math.max(
       0,
-      Math.min(1, clickPosition / rect.width)
+      Math.min(1, position / rect.width)
     );
 
-    const duration = playerRef.current.getDuration?.();
+    const total = playerRef.current.getDuration?.() || 0;
 
-    if (duration) {
-      playerRef.current.seekTo(duration * percentage, true);
+    if (total > 0) {
+      playerRef.current.seekTo(total * percentage, true);
+
       setProgress(percentage * 100);
+      setCurrentTime(total * percentage);
     }
   };
 
   const nextSong = () => {
     setProgress(0);
+    setCurrentTime(0);
+    setDuration(0);
     setIsPlaying(false);
 
     setCurrentIndex((previous) => {
@@ -204,7 +228,10 @@ export default function Home() {
     );
 
     if (!alreadyLiked) {
-      setLikedSongs((previous) => [...previous, currentSong]);
+      setLikedSongs((previous) => [
+        ...previous,
+        currentSong,
+      ]);
     }
 
     nextSong();
@@ -214,20 +241,24 @@ export default function Home() {
     nextSong();
   };
 
-  const formatTime = () => {
-    if (!playerRef.current) return "0:00";
+  const formatTime = (seconds: number) => {
+    if (!seconds || !Number.isFinite(seconds)) {
+      return "0:00";
+    }
 
-    const currentTime = playerRef.current.getCurrentTime?.() || 0;
+    const minutes = Math.floor(seconds / 60);
 
-    const minutes = Math.floor(currentTime / 60);
-    const seconds = Math.floor(currentTime % 60);
+    const remainingSeconds = Math.floor(seconds % 60);
 
-    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+    return `${minutes}:${remainingSeconds
+      .toString()
+      .padStart(2, "0")}`;
   };
 
   return (
     <main className="min-h-screen bg-black text-white">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-5 py-6">
+
         {/* HEADER */}
         <header className="mb-8 flex items-center justify-between">
           <div>
@@ -245,23 +276,29 @@ export default function Home() {
           </div>
         </header>
 
-        {/* CONTEÚDO PRINCIPAL */}
+        {/* ÁREA PRINCIPAL */}
         <div className="grid flex-1 gap-8 lg:grid-cols-[1fr_320px]">
+
           {/* PLAYER */}
           <section className="flex flex-col">
+
             <div className="relative aspect-video w-full overflow-hidden rounded-3xl bg-zinc-950 shadow-2xl">
+
               <div
                 id="youtube-player"
                 className="absolute inset-0 h-full w-full"
               />
 
-              {/* Impede interação direta com os controles do YouTube */}
+              {/* Bloqueia os controles originais do YouTube */}
               <div className="absolute inset-0 z-10" />
 
-              {/* Informações da música */}
+              {/* INFORMAÇÕES DA MÚSICA */}
               <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/70 to-transparent px-7 pb-7 pt-24">
+
                 <div className="flex items-end justify-between gap-4">
+
                   <div>
+
                     <p className="mb-2 text-sm font-medium text-zinc-400">
                       {currentSong.album}
                     </p>
@@ -273,33 +310,48 @@ export default function Home() {
                     <p className="mt-1 text-lg text-zinc-300">
                       {currentSong.artist}
                     </p>
+
                   </div>
 
                   <div className="flex-shrink-0 rounded-full bg-white px-4 py-2 text-sm font-bold text-black">
                     {currentSong.match}% match
                   </div>
+
                 </div>
+
               </div>
             </div>
 
             {/* CONTROLES */}
             <div className="mt-5">
+
+              {/* BARRA DE PROGRESSO */}
               <div
                 onClick={seek}
                 className="group h-2 w-full cursor-pointer rounded-full bg-zinc-800"
               >
                 <div
                   className="h-full rounded-full bg-white transition-all"
-                  style={{ width: `${progress}%` }}
+                  style={{
+                    width: `${progress}%`,
+                  }}
                 />
               </div>
 
+              {/* TEMPO */}
               <div className="mt-2 flex justify-between text-xs text-zinc-600">
-                <span>{formatTime()}</span>
-                <span>Vídeo do YouTube</span>
+                <span>
+                  {formatTime(currentTime)}
+                </span>
+
+                <span>
+                  {formatTime(duration)}
+                </span>
               </div>
 
+              {/* BOTÕES */}
               <div className="mt-5 flex items-center justify-center gap-5">
+
                 {/* PASSAR */}
                 <button
                   onClick={passSong}
@@ -309,7 +361,7 @@ export default function Home() {
                   ✕
                 </button>
 
-                {/* PLAY */}
+                {/* PLAY / PAUSE */}
                 <button
                   onClick={togglePlay}
                   className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-xl text-black transition hover:scale-105"
@@ -326,19 +378,25 @@ export default function Home() {
                 >
                   ♥
                 </button>
+
               </div>
 
               <div className="mt-5 text-center text-xs text-zinc-600">
                 Música {currentIndex + 1} de {songs.length}
               </div>
+
             </div>
           </section>
 
-          {/* LISTA DE CURTIDAS */}
+          {/* CURTIDAS */}
           <aside className="rounded-3xl border border-zinc-900 bg-zinc-950 p-5">
+
             <div className="mb-5 flex items-center justify-between">
+
               <div>
-                <h3 className="font-semibold">Suas curtidas</h3>
+                <h3 className="font-semibold">
+                  Suas curtidas
+                </h3>
 
                 <p className="mt-1 text-xs text-zinc-600">
                   Músicas que você escolheu
@@ -348,21 +406,30 @@ export default function Home() {
               <span className="rounded-full bg-zinc-900 px-3 py-1 text-xs text-zinc-400">
                 {likedSongs.length}
               </span>
+
             </div>
 
             {likedSongs.length === 0 ? (
+
               <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-zinc-800 p-6 text-center">
+
                 <p className="text-sm leading-6 text-zinc-600">
                   Suas músicas curtidas aparecerão aqui.
                 </p>
+
               </div>
+
             ) : (
+
               <div className="space-y-3">
+
                 {likedSongs.map((song) => (
+
                   <div
                     key={song.youtubeId}
                     className="flex items-center gap-3 rounded-2xl bg-zinc-900/60 p-3"
                   >
+
                     <img
                       src={`https://i.ytimg.com/vi/${song.youtubeId}/default.jpg`}
                       alt=""
@@ -370,6 +437,7 @@ export default function Home() {
                     />
 
                     <div className="min-w-0">
+
                       <p className="truncate text-sm font-medium">
                         {song.title}
                       </p>
@@ -377,12 +445,19 @@ export default function Home() {
                       <p className="truncate text-xs text-zinc-500">
                         {song.artist}
                       </p>
+
                     </div>
+
                   </div>
+
                 ))}
+
               </div>
+
             )}
+
           </aside>
+
         </div>
       </div>
     </main>
