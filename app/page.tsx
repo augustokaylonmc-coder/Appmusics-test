@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
+
 type Song = {
   title: string;
   artist: string;
@@ -41,77 +48,44 @@ const songs: Song[] = [
   },
 ];
 
-declare global {
-  interface Window {
-    YT: any;
-    onYouTubeIframeAPIReady: () => void;
-  }
-}
-
 export default function Home() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
-  const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [spotifyMessage, setSpotifyMessage] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   const playerRef = useRef<any>(null);
-  const playerContainerRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentSong = songs[currentIndex];
 
-  /*
-   * CARREGAR API DO YOUTUBE
-   */
-
   useEffect(() => {
-    if (window.YT) {
-      createPlayer();
-      return;
-    }
+    const loadYouTubeAPI = () => {
+      if (window.YT && window.YT.Player) {
+        createPlayer();
+        return;
+      }
 
-    const existingScript = document.querySelector(
-      'script[src="https://www.youtube.com/iframe_api"]'
-    );
+      window.onYouTubeIframeAPIReady = createPlayer;
 
-    if (!existingScript) {
-      const script = document.createElement("script");
+      const existingScript = document.querySelector(
+        'script[src="https://www.youtube.com/iframe_api"]'
+      );
 
-      script.src = "https://www.youtube.com/iframe_api";
-      script.async = true;
-
-      document.body.appendChild(script);
-    }
-
-    window.onYouTubeIframeAPIReady = () => {
-      createPlayer();
-    };
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
+      if (!existingScript) {
+        const script = document.createElement("script");
+        script.src = "https://www.youtube.com/iframe_api";
+        document.body.appendChild(script);
       }
     };
-  }, []);
 
-  /*
-   * CRIAR PLAYER DO YOUTUBE
-   */
+    const createPlayer = () => {
+      if (playerRef.current) {
+        playerRef.current.destroy();
+      }
 
-  function createPlayer() {
-    if (!playerContainerRef.current || !window.YT) {
-      return;
-    }
-
-    playerRef.current = new window.YT.Player(
-      playerContainerRef.current,
-      {
-        height: "100%",
-        width: "100%",
+      playerRef.current = new window.YT.Player("youtube-player", {
         videoId: currentSong.youtubeId,
-
         playerVars: {
           playsinline: 1,
           controls: 0,
@@ -120,529 +94,297 @@ export default function Home() {
           disablekb: 1,
           modestbranding: 1,
         },
-
         events: {
-          onReady: (event: any) => {
-            setDuration(event.target.getDuration());
-
-            if (timerRef.current) {
-              clearInterval(timerRef.current);
-            }
-
-            timerRef.current = setInterval(() => {
-              if (!playerRef.current) {
-                return;
-              }
-
-              const time =
-                playerRef.current.getCurrentTime();
-
-              const total =
-                playerRef.current.getDuration();
-
-              setCurrentTime(time);
-
-              if (total > 0) {
-                setDuration(total);
-              }
-            }, 250);
+          onReady: () => {
+            setIsPlaying(false);
+            setProgress(0);
           },
-
           onStateChange: (event: any) => {
-            if (
-              event.data ===
-              window.YT.PlayerState.PLAYING
-            ) {
-              setPlaying(true);
+            if (event.data === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+              startProgressTimer();
             }
 
             if (
-              event.data ===
-              window.YT.PlayerState.PAUSED
+              event.data === window.YT.PlayerState.PAUSED ||
+              event.data === window.YT.PlayerState.ENDED
             ) {
-              setPlaying(false);
+              setIsPlaying(false);
+              stopProgressTimer();
             }
 
-            if (
-              event.data ===
-              window.YT.PlayerState.ENDED
-            ) {
-              setPlaying(false);
+            if (event.data === window.YT.PlayerState.ENDED) {
               nextSong();
             }
           },
         },
-      }
-    );
-  }
+      });
+    };
 
-  /*
-   * TROCAR VÍDEO
-   */
-
-  useEffect(() => {
-    if (!playerRef.current || !currentSong) {
-      return;
-    }
-
-    playerRef.current.loadVideoById(
-      currentSong.youtubeId
-    );
-
-    setCurrentTime(0);
-    setDuration(0);
-    setPlaying(false);
-
-    const durationTimer = setTimeout(() => {
-      if (playerRef.current) {
-        setDuration(
-          playerRef.current.getDuration()
-        );
-      }
-    }, 1000);
+    loadYouTubeAPI();
 
     return () => {
-      clearTimeout(durationTimer);
+      stopProgressTimer();
+
+      if (playerRef.current) {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
     };
   }, [currentIndex]);
 
-  /*
-   * PLAY / PAUSE
-   */
+  const startProgressTimer = () => {
+    stopProgressTimer();
 
-  function togglePlay() {
-    if (!playerRef.current || !window.YT) {
-      return;
+    progressTimerRef.current = setInterval(() => {
+      if (!playerRef.current) return;
+
+      const duration = playerRef.current.getDuration?.();
+      const currentTime = playerRef.current.getCurrentTime?.();
+
+      if (duration && duration > 0) {
+        setProgress((currentTime / duration) * 100);
+      }
+    }, 250);
+  };
+
+  const stopProgressTimer = () => {
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
     }
+  };
 
-    const state =
-      playerRef.current.getPlayerState();
+  const togglePlay = () => {
+    if (!playerRef.current) return;
 
-    if (
-      state ===
-        window.YT.PlayerState.PLAYING ||
-      state ===
-        window.YT.PlayerState.BUFFERING
-    ) {
+    const state = playerRef.current.getPlayerState();
+
+    if (state === window.YT.PlayerState.PLAYING) {
       playerRef.current.pauseVideo();
     } else {
       playerRef.current.playVideo();
     }
-  }
+  };
 
-  /*
-   * CLICAR NA LINHA DO TEMPO
-   */
+  const seek = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!playerRef.current) return;
 
-  function seekVideo(
-    event: React.MouseEvent<HTMLDivElement>
-  ) {
-    if (!playerRef.current || duration <= 0) {
-      return;
-    }
-
-    const rect =
-      event.currentTarget.getBoundingClientRect();
-
-    const clickPosition =
-      event.clientX - rect.left;
-
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clickPosition = event.clientX - rect.left;
     const percentage = Math.max(
       0,
-      Math.min(
-        clickPosition / rect.width,
-        1
-      )
+      Math.min(1, clickPosition / rect.width)
     );
 
-    const newTime =
-      percentage * duration;
+    const duration = playerRef.current.getDuration?.();
 
-    playerRef.current.seekTo(
-      newTime,
-      true
-    );
-
-    setCurrentTime(newTime);
-  }
-
-  /*
-   * PRÓXIMA MÚSICA
-   */
-
-  function nextSong() {
-    setPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-
-    if (currentIndex < songs.length - 1) {
-      setCurrentIndex(
-        (index) => index + 1
-      );
-    } else {
-      setCurrentIndex(0);
+    if (duration) {
+      playerRef.current.seekTo(duration * percentage, true);
+      setProgress(percentage * 100);
     }
-  }
+  };
 
-  /*
-   * CURTIR
-   */
+  const nextSong = () => {
+    setProgress(0);
+    setIsPlaying(false);
 
-  function likeSong() {
-    if (!currentSong) {
-      return;
-    }
-
-    setLikedSongs((current) => {
-      const alreadyLiked =
-        current.some(
-          (song) =>
-            song.title === currentSong.title &&
-            song.artist === currentSong.artist
-        );
-
-      if (alreadyLiked) {
-        return current;
+    setCurrentIndex((previous) => {
+      if (previous >= songs.length - 1) {
+        return 0;
       }
 
-      return [...current, currentSong];
+      return previous + 1;
     });
+  };
 
-    nextSong();
-  }
+  const likeSong = () => {
+    const alreadyLiked = likedSongs.some(
+      (song) => song.youtubeId === currentSong.youtubeId
+    );
 
-  /*
-   * PASSAR
-   */
-
-  function passSong() {
-    nextSong();
-  }
-
-  /*
-   * FORMATAR TEMPO
-   */
-
-  function formatTime(seconds: number) {
-    if (
-      !Number.isFinite(seconds) ||
-      seconds < 0
-    ) {
-      return "0:00";
+    if (!alreadyLiked) {
+      setLikedSongs((previous) => [...previous, currentSong]);
     }
 
-    const minutes =
-      Math.floor(seconds / 60);
+    nextSong();
+  };
 
-    const remainingSeconds =
-      Math.floor(seconds % 60);
+  const passSong = () => {
+    nextSong();
+  };
 
-    return `${minutes}:${remainingSeconds
-      .toString()
-      .padStart(2, "0")}`;
-  }
+  const formatTime = () => {
+    if (!playerRef.current) return "0:00";
 
-  const progress =
-    duration > 0
-      ? Math.min(
-          (currentTime / duration) * 100,
-          100
-        )
-      : 0;
+    const currentTime = playerRef.current.getCurrentTime?.() || 0;
 
-  if (!currentSong) {
-    return null;
-  }
+    const minutes = Math.floor(currentTime / 60);
+    const seconds = Math.floor(currentTime % 60);
+
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  };
 
   return (
-    <main className="min-h-screen bg-[#09090b] text-white">
-
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-6">
-
+    <main className="min-h-screen bg-black text-white">
+      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-5 py-6">
         {/* HEADER */}
-
-        <header className="flex items-center justify-between">
-
+        <header className="mb-8 flex items-center justify-between">
           <div>
-
-            <h1 className="text-2xl font-bold tracking-tight">
-              Music
-              <span className="text-pink-500">
-                Swipe
-              </span>
+            <h1 className="text-3xl font-bold tracking-tight">
+              MusicSwipe
             </h1>
 
             <p className="mt-1 text-sm text-zinc-500">
               Descubra músicas que combinam com você
             </p>
-
           </div>
 
-          <div className="rounded-full border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm text-zinc-300">
-            ❤️ {likedSongs.length} curtidas
+          <div className="rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-zinc-400">
+            {likedSongs.length} curtidas
           </div>
-
         </header>
 
-        {/* CONTEÚDO */}
+        {/* CONTEÚDO PRINCIPAL */}
+        <div className="grid flex-1 gap-8 lg:grid-cols-[1fr_320px]">
+          {/* PLAYER */}
+          <section className="flex flex-col">
+            <div className="relative aspect-video w-full overflow-hidden rounded-3xl bg-zinc-950 shadow-2xl">
+              <div
+                id="youtube-player"
+                className="absolute inset-0 h-full w-full"
+              />
 
-        <div className="flex flex-1 flex-col items-center justify-center gap-10 py-10 lg:flex-row">
+              {/* Impede interação direta com os controles do YouTube */}
+              <div className="absolute inset-0 z-10" />
 
-          {/* CARD DA MÚSICA */}
+              {/* Informações da música */}
+              <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/70 to-transparent px-7 pb-7 pt-24">
+                <div className="flex items-end justify-between gap-4">
+                  <div>
+                    <p className="mb-2 text-sm font-medium text-zinc-400">
+                      {currentSong.album}
+                    </p>
 
-          <section className="w-full max-w-sm">
+                    <h2 className="text-3xl font-bold">
+                      {currentSong.title}
+                    </h2>
 
-            <div className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-
-              {/* VÍDEO */}
-
-              <div className="relative aspect-square w-full overflow-hidden bg-black">
-
-                <div
-                  ref={playerContainerRef}
-                  className="absolute inset-0 h-full w-full"
-                />
-
-                {/* CAMADA TRANSPARENTE
-                    IMPEDE O MOUSE DE INTERAGIR
-                    COM OS CONTROLES DO YOUTUBE */}
-
-                <div className="absolute inset-0 z-10" />
-
-                {/* COMPATIBILIDADE */}
-
-                <div className="absolute left-4 top-4 z-30 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
-                  {currentSong.match}% compatível
-                </div>
-
-                {/* INFORMAÇÕES DA MÚSICA */}
-
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/80 to-transparent px-6 pb-5 pt-32">
-
-                  <p className="text-sm text-zinc-300">
-                    {currentSong.album}
-                  </p>
-
-                  <h2 className="mt-1 text-3xl font-bold leading-tight">
-                    {currentSong.title}
-                  </h2>
-
-                  <p className="mt-1 text-lg text-zinc-300">
-                    {currentSong.artist}
-                  </p>
-
-                </div>
-
-              </div>
-
-              {/* LINHA DO TEMPO */}
-
-              <div className="px-5 pt-5">
-
-                <div
-                  onClick={seekVideo}
-                  className="group flex h-5 cursor-pointer items-center"
-                  title="Clique para mudar a posição da música"
-                >
-
-                  <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-700 transition-all group-hover:h-2">
-
-                    <div
-                      className="absolute left-0 top-0 h-full rounded-full bg-pink-500"
-                      style={{
-                        width: `${progress}%`,
-                      }}
-                    />
-
+                    <p className="mt-1 text-lg text-zinc-300">
+                      {currentSong.artist}
+                    </p>
                   </div>
 
+                  <div className="flex-shrink-0 rounded-full bg-white px-4 py-2 text-sm font-bold text-black">
+                    {currentSong.match}% match
+                  </div>
                 </div>
+              </div>
+            </div>
 
-                <div className="mt-1 flex justify-between text-xs text-zinc-500">
-
-                  <span>
-                    {formatTime(currentTime)}
-                  </span>
-
-                  <span>
-                    {formatTime(duration)}
-                  </span>
-
-                </div>
-
+            {/* CONTROLES */}
+            <div className="mt-5">
+              <div
+                onClick={seek}
+                className="group h-2 w-full cursor-pointer rounded-full bg-zinc-800"
+              >
+                <div
+                  className="h-full rounded-full bg-white transition-all"
+                  style={{ width: `${progress}%` }}
+                />
               </div>
 
-              {/* PLAY / PAUSE */}
+              <div className="mt-2 flex justify-between text-xs text-zinc-600">
+                <span>{formatTime()}</span>
+                <span>Vídeo do YouTube</span>
+              </div>
 
-              <div className="px-5 py-5">
-
+              <div className="mt-5 flex items-center justify-center gap-5">
+                {/* PASSAR */}
                 <button
-                  onClick={togglePlay}
-                  aria-label={
-                    playing
-                      ? "Pausar"
-                      : "Reproduzir"
-                  }
-                  className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white text-xl text-black shadow-lg transition hover:scale-105 hover:bg-zinc-200"
+                  onClick={passSong}
+                  className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-xl text-zinc-400 transition hover:border-zinc-600 hover:text-white"
+                  title="Passar"
                 >
-                  {playing ? "❚❚" : "▶"}
+                  ✕
                 </button>
 
+                {/* PLAY */}
+                <button
+                  onClick={togglePlay}
+                  className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-xl text-black transition hover:scale-105"
+                  title={isPlaying ? "Pausar" : "Reproduzir"}
+                >
+                  {isPlaying ? "❚❚" : "▶"}
+                </button>
+
+                {/* LIKE */}
+                <button
+                  onClick={likeSong}
+                  className="flex h-14 w-14 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950 text-xl text-zinc-400 transition hover:border-zinc-600 hover:text-white"
+                  title="Curtir"
+                >
+                  ♥
+                </button>
               </div>
 
+              <div className="mt-5 text-center text-xs text-zinc-600">
+                Música {currentIndex + 1} de {songs.length}
+              </div>
             </div>
-
-            {/* AÇÕES */}
-
-            <div className="mt-6 flex items-center justify-center gap-6">
-
-              <button
-                onClick={passSong}
-                aria-label="Passar música"
-                className="flex h-16 w-16 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-2xl transition hover:scale-110 hover:border-red-500 hover:bg-red-500/10"
-              >
-                ❌
-              </button>
-
-              <button
-                onClick={likeSong}
-                aria-label="Curtir música"
-                className="flex h-20 w-20 items-center justify-center rounded-full bg-pink-500 text-3xl shadow-lg shadow-pink-500/20 transition hover:scale-110 hover:bg-pink-400"
-              >
-                ❤️
-              </button>
-
-              <button
-                onClick={nextSong}
-                aria-label="Próxima música"
-                className="flex h-16 w-16 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-2xl transition hover:scale-110 hover:border-zinc-500"
-              >
-                ⏭️
-              </button>
-
-            </div>
-
-            <p className="mt-5 text-center text-xs text-zinc-600">
-              ❌ Passar &nbsp; • &nbsp; ❤️ Curtir &nbsp; • &nbsp; ▶ Play/Pause
-            </p>
-
           </section>
 
-          {/* CURTIDAS */}
+          {/* LISTA DE CURTIDAS */}
+          <aside className="rounded-3xl border border-zinc-900 bg-zinc-950 p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Suas curtidas</h3>
 
-          <aside className="w-full max-w-sm lg:w-80">
-
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
-
-              <div className="flex items-center justify-between">
-
-                <h3 className="font-semibold">
-                  Suas curtidas
-                </h3>
-
-                <span className="text-sm text-zinc-500">
-                  {likedSongs.length}
-                </span>
-
+                <p className="mt-1 text-xs text-zinc-600">
+                  Músicas que você escolheu
+                </p>
               </div>
 
-              {likedSongs.length === 0 ? (
-
-                <div className="py-12 text-center">
-
-                  <div className="text-4xl">
-                    🎵
-                  </div>
-
-                  <p className="mt-3 text-sm text-zinc-400">
-                    Suas músicas curtidas aparecerão aqui.
-                  </p>
-
-                </div>
-
-              ) : (
-
-                <div className="mt-4 space-y-3">
-
-                  {likedSongs.map(
-                    (song) => (
-
-                      <div
-                        key={`${song.title}-${song.artist}`}
-                        className="flex items-center gap-3 rounded-xl bg-zinc-800/70 p-2"
-                      >
-
-                        <img
-                          src={`https://i.ytimg.com/vi/${song.youtubeId}/default.jpg`}
-                          alt=""
-                          className="h-12 w-12 rounded-lg object-cover"
-                        />
-
-                        <div className="min-w-0">
-
-                          <p className="truncate text-sm font-medium">
-                            {song.title}
-                          </p>
-
-                          <p className="truncate text-xs text-zinc-500">
-                            {song.artist}
-                          </p>
-
-                        </div>
-
-                      </div>
-
-                    )
-                  )}
-
-                </div>
-
-              )}
-
-              {/* SPOTIFY */}
-
-              <button
-                disabled={
-                  likedSongs.length === 0
-                }
-                onClick={() =>
-                  setSpotifyMessage(true)
-                }
-                className="mt-5 w-full rounded-xl bg-white px-4 py-3 text-sm font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                Criar playlist no Spotify
-              </button>
-
-              {spotifyMessage && (
-
-                <div className="mt-3 rounded-xl border border-zinc-700 bg-zinc-800 p-3 text-center text-xs text-zinc-300">
-
-                  O Spotify ainda não está conectado.
-
-                  <br />
-
-                  <span className="text-zinc-500">
-                    A integração será adicionada na próxima etapa.
-                  </span>
-
-                </div>
-
-              )}
-
+              <span className="rounded-full bg-zinc-900 px-3 py-1 text-xs text-zinc-400">
+                {likedSongs.length}
+              </span>
             </div>
 
+            {likedSongs.length === 0 ? (
+              <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-zinc-800 p-6 text-center">
+                <p className="text-sm leading-6 text-zinc-600">
+                  Suas músicas curtidas aparecerão aqui.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {likedSongs.map((song) => (
+                  <div
+                    key={song.youtubeId}
+                    className="flex items-center gap-3 rounded-2xl bg-zinc-900/60 p-3"
+                  >
+                    <img
+                      src={`https://i.ytimg.com/vi/${song.youtubeId}/default.jpg`}
+                      alt=""
+                      className="h-12 w-12 rounded-lg object-cover"
+                    />
+
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {song.title}
+                      </p>
+
+                      <p className="truncate text-xs text-zinc-500">
+                        {song.artist}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </aside>
-
         </div>
-
-        {/* FOOTER */}
-
-        <footer className="pb-2 text-center text-xs text-zinc-700">
-          MusicSwipe • Descoberta musical
-        </footer>
-
       </div>
-
     </main>
   );
 }
