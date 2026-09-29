@@ -578,8 +578,8 @@ export default function Home() {
     }
 
     const firstSeed = selected[0];
-    const recommendations = selected.length
-      ? await getRecommendations(selected, seededPrefs, selected)
+    const recommendations = firstSeed
+      ? await getRecommendations(firstSeed, seededPrefs, selected)
       : [];
 
     setQueue(recommendations);
@@ -646,7 +646,7 @@ export default function Home() {
         currentSong
       ) {
         const additions = await getRecommendations(
-          [currentSong],
+          currentSong,
           preferencesRef.current,
           queueRef.current
         );
@@ -670,7 +670,7 @@ export default function Home() {
     if (!seed) return;
 
     const additions = await getRecommendations(
-      [seed],
+      seed,
       preferencesRef.current,
       queueRef.current
     );
