@@ -29,7 +29,6 @@ type Song = {
   youtubeId: string;
   thumbnail: string;
   channel: string;
-  channelId?: string;
   version: VersionKey;
   description?: string;
 };
@@ -112,10 +111,29 @@ function resultToSong(item: any): Song | null {
     youtubeId: id,
     thumbnail,
     channel: String(s.channelTitle ?? "YouTube"),
-    channelId: String(s.channelId ?? ""),
     version: classifyVersion(title, description),
     description,
   };
+}
+
+// Reconhece versões diferentes como a mesma música-base.
+// Ex.: "Blinding Lights", "Blinding Lights Remix" e
+// "Blinding Lights Slowed + Reverb" compartilham a mesma chave.
+function baseSongKey(song: Song) {
+  const clean = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/\[[^\]]*\]/g, " ")
+      .replace(/\([^)]*\)/g, " ")
+      .replace(
+        /\b(slowed|reverb|sped\s*up|speed\s*up|speedup|sped-up|nightcore|remix|rework|bootleg|mashup|edit|flip|cover|live|ao\s*vivo|concert|festival|performance|instrumental|karaoke|official\s*(audio|video|music video)|lyrics?|visualizer|audio|video|hd|hq)\b/gi,
+        " "
+      )
+      .replace(/[^a-z0-9áéíóúàâêôãõçñ]+/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  return `${clean(song.artist)}::${clean(song.title)}`;
 }
 
 function formatTime(seconds: number) {
@@ -133,7 +151,6 @@ export default function Home() {
   const [results, setResults] = useState<Song[]>([]);
   const [selected, setSelected] = useState<Song[]>([]);
   const [searching, setSearching] = useState(false);
-  const [searchSuggestions, setSearchSuggestions] = useState<Song[]>([]);
   const [error, setError] = useState("");
 
   const [preferences, setPreferences] =
@@ -156,10 +173,7 @@ export default function Home() {
   const preferencesRef = useRef(preferences);
   const likedSongsRef = useRef(likedSongs);
   const selectedRef = useRef(selected);
-
-  // Memória usada pelas sugestões de pesquisa.
-  const searchHistoryRef = useRef<Song[]>([]);
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recentSongKeysRef = useRef<string[]>([]);
 
   const currentSong = queue[index];
 
@@ -180,14 +194,15 @@ export default function Home() {
     selectedRef.current = selected;
   }, [selected]);
 
-  useEffect(() => {
-    return () => {
-      if (searchDebounceRef.current) {
-        clearTimeout(searchDebounceRef.current);
-        searchDebounceRef.current = null;
-      }
-    };
-  }, []);
+  function rememberSong(song: Song) {
+    const key = baseSongKey(song);
+    if (!key) return;
+
+    recentSongKeysRef.current = [
+      ...recentSongKeysRef.current.filter((item) => item !== key),
+      key,
+    ].slice(-10);
+  }
 
   function stopTimer() {
     if (timerRef.current) {
@@ -211,43 +226,8 @@ export default function Home() {
     }, 250);
   }
 
-  function searchResultScore(song: Song, query: string) {
-    const q = query.toLowerCase().trim();
-    const title = song.title.toLowerCase();
-    const description = song.description?.toLowerCase() ?? "";
-    const channel = song.channel.toLowerCase();
-
-    let score = 0;
-
-    // Prioriza vídeos que parecem ser a faixa musical real.
-    if (/official audio|official music video|official video/.test(title)) score += 28;
-    if (/provided to youtube by|topic/.test(description + " " + channel)) score += 12;
-    if (/lyrics?|lyric video|audio/.test(title)) score += 8;
-
-    // Penaliza Shorts, fan edits e conteúdo que costuma aparecer no topo
-    // mas não é uma faixa adequada para o MusicSwipe.
-    if (/\bshorts?\b|#shorts/.test(title + " " + description)) score -= 60;
-    if (/fan.?made|fan edit|edit audio|meme|reaction|reacts?|compilation|ranking|top \d|tutorial|review/.test(title)) {
-      score -= 45;
-    }
-
-    // Uma busca exata deve favorecer fortemente a correspondência do texto.
-    const queryWords = q.split(/\s+/).filter((word) => word.length > 2);
-    for (const word of queryWords) {
-      if (title.includes(word)) score += 3;
-    }
-
-    // Canais oficiais/Topic recebem preferência, sem depender de um nome
-    // específico de gravadora.
-    if (/ - topic$|\btopic\b/.test(channel)) score += 14;
-    if (/official|records|vevo/.test(channel)) score += 8;
-
-    return score;
-  }
-
-  async function youtubeSearch(query: string, maxResults = 25): Promise<Song[]> {
+  async function youtubeSearch(query: string): Promise<Song[]> {
     if (!apiKey) throw new Error("Configure a chave da YouTube Data API.");
-
     const params = new URLSearchParams({
       part: "snippet",
       q: query,
@@ -255,10 +235,9 @@ export default function Home() {
       videoEmbeddable: "true",
       videoSyndicated: "true",
       safeSearch: "strict",
-      maxResults: String(Math.min(50, Math.max(5, maxResults))),
+      maxResults: "10",
       regionCode: "BR",
       relevanceLanguage: "pt",
-      order: "relevance",
       key: apiKey,
     });
 
@@ -273,73 +252,7 @@ export default function Home() {
 
     return (data.items ?? [])
       .map(resultToSong)
-      .filter(Boolean)
-      .map((song: Song) => ({
-        ...song,
-        _searchScore: searchResultScore(song, query),
-      }))
-      .sort((a: Song & { _searchScore?: number }, b: Song & { _searchScore?: number }) =>
-        (b._searchScore ?? 0) - (a._searchScore ?? 0)
-      )
-      .map(({ _searchScore, ...song }: Song & { _searchScore?: number }) => song);
-  }
-
-  function updateSearchSuggestions(value: string) {
-    const query = value.trim().toLowerCase();
-
-    if (!query) {
-      setSearchSuggestions([]);
-      return;
-    }
-
-    const combined = [...searchHistoryRef.current, ...results];
-    const unique = new Map<string, Song>();
-
-    for (const song of combined) {
-      const haystack =
-        `${song.title} ${song.artist} ${song.channel}`.toLowerCase();
-
-      if (haystack.includes(query)) {
-        unique.set(song.youtubeId, song);
-      }
-    }
-
-    setSearchSuggestions(Array.from(unique.values()).slice(0, 6));
-  }
-
-  function handleSearchInput(value: string) {
-    setSearch(value);
-    updateSearchSuggestions(value);
-
-    if (searchDebounceRef.current) {
-      clearTimeout(searchDebounceRef.current);
-    }
-
-    const query = value.trim();
-    if (query.length < 2 || !apiKey) return;
-
-    // O YouTube Data API não fornece um endpoint oficial de autocomplete.
-    // Em vez de gastar quota a cada tecla, só consultamos após uma pausa.
-    searchDebounceRef.current = setTimeout(async () => {
-      try {
-        const found = await youtubeSearch(query, 8);
-        setSearchSuggestions(found.slice(0, 6));
-        searchHistoryRef.current = [
-          ...found,
-          ...searchHistoryRef.current,
-        ].filter(
-          (song, index, array) =>
-            array.findIndex((item) => item.youtubeId === song.youtubeId) === index
-        ).slice(0, 30);
-      } catch {
-        // Sugestões são auxiliares: se falharem, a busca normal continua funcionando.
-      }
-    }, 450);
-  }
-
-  function chooseSearchSuggestion(song: Song) {
-    setSearch(`${song.artist} - ${song.title}`);
-    setSearchSuggestions([]);
+      .filter(Boolean) as Song[];
   }
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
@@ -350,16 +263,8 @@ export default function Home() {
     setError("");
 
     try {
-      const found = await youtubeSearch(search.trim(), 25);
+      const found = await youtubeSearch(search.trim());
       setResults(found);
-      setSearchSuggestions([]);
-      searchHistoryRef.current = [
-        ...found,
-        ...searchHistoryRef.current,
-      ].filter(
-        (song, index, array) =>
-          array.findIndex((item) => item.youtubeId === song.youtubeId) === index
-      ).slice(0, 40);
       if (!found.length) setError("Nenhum resultado encontrado.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao pesquisar.");
@@ -399,22 +304,12 @@ export default function Home() {
     return 35 + prefs[song.version].value * 0.65;
   }
 
-  function recommendationQueries(
-    profileSongs: Song[],
-    prefs = preferences
-  ) {
-    const uniqueProfile = Array.from(
-      new Map(
-        profileSongs.map((song) => [baseSongKey(song), song])
-      ).values()
-    );
-
-    const seeds = uniqueProfile.slice(-8);
+  function recommendationQuery(seed: Song, prefs = preferences) {
     const best = VERSION_KEYS
       .map((key) => ({ key, value: prefs[key].value }))
       .sort((a, b) => b.value - a.value)[0];
 
-    const versionTerms: Record<VersionKey, string> = {
+    const terms: Record<VersionKey, string> = {
       remix: "remix",
       original: "official audio",
       live: "live",
@@ -424,50 +319,8 @@ export default function Home() {
       instrumental: "instrumental",
     };
 
-    const versionHint = best.value >= 78 ? ` ${versionTerms[best.key]}` : "";
-
-    // Fazemos buscas separadas por algumas seeds. O resultado de cada busca
-    // é combinado e depois o algoritmo força diversidade de artistas.
-    return seeds.slice(0, 5).map(
-      (seed) =>
-        `"${seed.title}" similar songs${versionHint} -"${seed.artist}"`
-    );
-  }
-
-  function candidateScore(
-    song: Song,
-    profileSongs: Song[],
-    artistCounts: Map<string, number>,
-    existing: Song[]
-  ) {
-    const artist = song.artist.trim().toLowerCase();
-    const sameArtistCount = artistCounts.get(artist) ?? 0;
-    const profileArtists = new Set(
-      profileSongs.map((item) => item.artist.trim().toLowerCase())
-    );
-    const existingKeys = new Set(existing.map(baseSongKey));
-
-    let score = preferenceScore(song, preferencesRef.current);
-
-    // Descoberta é prioridade: artistas já presentes no perfil recebem uma
-    // penalização, mas não são proibidos.
-    if (profileArtists.has(artist)) score -= 35;
-
-    // Cada repetição consecutiva do artista derruba bastante a prioridade.
-    score -= sameArtistCount * 55;
-
-    // Não coloca a mesma música-base de uma seed imediatamente.
-    if (profileSongs.some((item) => baseSongKey(item) === baseSongKey(song))) {
-      score -= 120;
-    }
-
-    if (existingKeys.has(baseSongKey(song))) score -= 100;
-
-    if (recentSongKeysRef.current.includes(baseSongKey(song))) {
-      score -= 80;
-    }
-
-    return score;
+    const versionTerm = best.value >= 68 ? terms[best.key] : "";
+    return `${seed.artist} ${seed.title} ${versionTerm}`.trim();
   }
 
   async function getRecommendations(
@@ -481,79 +334,52 @@ export default function Home() {
     setLoadingMore(true);
 
     try {
-      const queries = recommendationQueries(profileSongs, prefs);
-      const batches = await Promise.all(
-        queries.map((query) => youtubeSearch(query, 12).catch(() => []))
+      const seeds = Array.from(
+        new Map(profileSongs.map((song) => [baseSongKey(song), song])).values()
+      ).slice(-5);
+
+      const foundLists = await Promise.all(
+        seeds.map((seed) => youtubeSearch(recommendationQuery(seed, prefs)))
       );
 
-      const all = batches.flat();
-      const unique = new Map<string, Song>();
-
-      for (const song of all) {
-        if (!unique.has(song.youtubeId)) unique.set(song.youtubeId, song);
-      }
-
+      const found = foundLists.flat();
       const existingIds = new Set(existing.map((s) => s.youtubeId));
       const existingBaseKeys = new Set(existing.map(baseSongKey));
       const profileBaseKeys = new Set(profileSongs.map(baseSongKey));
+      const seenIds = new Set<string>();
+      const seenBaseKeys = new Set<string>();
 
-      const candidates = Array.from(unique.values())
-        .filter((song) => !existingIds.has(song.youtubeId))
-        .filter((song) => !existingBaseKeys.has(baseSongKey(song)))
-        .filter((song) => !profileBaseKeys.has(baseSongKey(song)));
+      return found
+        .filter((song) => {
+          const key = baseSongKey(song);
+          if (existingIds.has(song.youtubeId)) return false;
+          if (existingBaseKeys.has(key)) return false;
+          if (profileBaseKeys.has(key)) return false;
+          if (seenIds.has(song.youtubeId)) return false;
+          if (seenBaseKeys.has(key)) return false;
+          seenIds.add(song.youtubeId);
+          seenBaseKeys.add(key);
+          return true;
+        })
+        .map((song) => {
+          let score = preferenceScore(song, prefs);
+          const key = baseSongKey(song);
 
-      // Primeiro ordenamos considerando o artista para impedir que o topo
-      // seja "5 músicas diferentes do mesmo artista".
-      const artistCounts = new Map<string, number>();
-      const chosen: Song[] = [];
+          if (recentSongKeysRef.current.includes(key)) score -= 80;
 
-      candidates
-        .sort(
-          (a, b) =>
-            candidateScore(b, profileSongs, artistCounts, existing) -
-            candidateScore(a, profileSongs, artistCounts, existing)
-        )
-        .forEach((song) => {
-          const artist = song.artist.trim().toLowerCase();
-          const count = artistCounts.get(artist) ?? 0;
+          const sameArtistCount = existing.filter(
+            (item) => item.artist.trim().toLowerCase() === song.artist.trim().toLowerCase()
+          ).length;
+          score -= sameArtistCount * 45;
 
-          // No máximo uma música do mesmo artista dentro do pequeno lote.
-          // Se faltarem candidatos, permitimos uma segunda.
-          if (count >= 1 && chosen.length < 8) return;
-
-          chosen.push({
+          return {
             ...song,
-            match: Math.round(
-              clamp(candidateScore(song, profileSongs, artistCounts, existing))
-            ),
-          });
-
-          artistCounts.set(artist, count + 1);
-        });
-
-      // Fallback: se o filtro de diversidade deixou poucos resultados,
-      // completa com candidatos restantes, mas ainda penalizando repetição.
-      if (chosen.length < 6) {
-        for (const song of candidates) {
-          if (chosen.some((item) => item.youtubeId === song.youtubeId)) continue;
-
-          const artist = song.artist.trim().toLowerCase();
-          const count = artistCounts.get(artist) ?? 0;
-          if (count >= 2) continue;
-
-          chosen.push({
-            ...song,
-            match: Math.round(
-              clamp(candidateScore(song, profileSongs, artistCounts, existing))
-            ),
-          });
-          artistCounts.set(artist, count + 1);
-
-          if (chosen.length >= 8) break;
-        }
-      }
-
-      return chosen;
+            match: Math.round(clamp(score)),
+            _score: score,
+          };
+        })
+        .sort((a, b) => b._score - a._score)
+        .map(({ _score, ...song }) => song);
     } finally {
       searchingMoreRef.current = false;
       setLoadingMore(false);
@@ -577,7 +403,6 @@ export default function Home() {
       }
     }
 
-    const firstSeed = selected[0];
     const recommendations = selected.length
       ? await getRecommendations(selected, seededPrefs, selected)
       : [];
@@ -636,6 +461,9 @@ export default function Home() {
   }
 
   async function nextSong() {
+    const current = queueRef.current[indexRef.current];
+    if (current) rememberSong(current);
+
     const nextIndex = indexRef.current + 1;
 
     if (nextIndex < queueRef.current.length) {
@@ -645,8 +473,13 @@ export default function Home() {
         queueRef.current.length - nextIndex <= 3 &&
         currentSong
       ) {
+        const profile = [
+          ...selectedRef.current,
+          ...likedSongsRef.current,
+          currentSong,
+        ];
         const additions = await getRecommendations(
-          [currentSong],
+          profile,
           preferencesRef.current,
           queueRef.current
         );
@@ -663,14 +496,15 @@ export default function Home() {
       return;
     }
 
-    const seed =
-      likedSongsRef.current[likedSongsRef.current.length - 1] ??
-      selectedRef.current[selectedRef.current.length - 1];
+    const profile = [
+      ...selectedRef.current,
+      ...likedSongsRef.current,
+    ];
 
-    if (!seed) return;
+    if (!profile.length) return;
 
     const additions = await getRecommendations(
-      [seed],
+      profile,
       preferencesRef.current,
       queueRef.current
     );
@@ -867,11 +701,7 @@ export default function Home() {
             >
               <input
                 value={search}
-                onChange={(e) => handleSearchInput(e.target.value)}
-                onFocus={() => updateSearchSuggestions(search)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setSearchSuggestions([]);
-                }}
+                onChange={(e) => setSearch(e.target.value)}
                 placeholder="Pesquise uma música, artista ou álbum..."
                 className="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-900 px-5 py-4 outline-none placeholder:text-zinc-600 focus:border-pink-500"
               />
@@ -883,33 +713,6 @@ export default function Home() {
                 {searching ? "..." : "Pesquisar"}
               </button>
             </form>
-
-            {searchSuggestions.length > 0 && (
-              <div className="mx-auto mt-2 w-full max-w-2xl overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-xl">
-                {searchSuggestions.map((song) => (
-                  <button
-                    key={song.youtubeId}
-                    type="button"
-                    onClick={() => chooseSearchSuggestion(song)}
-                    className="flex w-full items-center gap-3 border-b border-zinc-800/70 px-4 py-3 text-left last:border-b-0 hover:bg-zinc-800"
-                  >
-                    <img
-                      src={song.thumbnail}
-                      alt=""
-                      className="h-10 w-10 shrink-0 rounded-lg object-cover"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">
-                        {song.title}
-                      </span>
-                      <span className="block truncate text-xs text-zinc-500">
-                        {song.artist}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
 
             {!apiKey && (
               <p className="mx-auto mt-4 w-full max-w-2xl rounded-xl border border-amber-900/50 bg-amber-950/20 p-3 text-sm text-amber-300">
