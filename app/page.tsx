@@ -4,7 +4,9 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
+  type KeyboardEvent,
   type MouseEvent,
 } from "react";
 
@@ -17,10 +19,7 @@ type VersionKey =
   | "speedup"
   | "instrumental";
 
-type Preference = {
-  value: number;
-  manual: boolean;
-};
+type Preference = { value: number; manual: boolean };
 
 type Song = {
   title: string;
@@ -71,91 +70,97 @@ declare global {
   }
 }
 
-function clamp(value: number) {
-  return Math.max(0, Math.min(100, value));
+function clamp(n: number) {
+  return Math.max(0, Math.min(100, n));
 }
 
-function normalize(text: string) {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+function classifyVersion(title: string, description = ""): VersionKey {
+  const text = `${title} ${description}`.toLowerCase();
 
-function classifyVersion(
-  title: string,
-  description = ""
-): VersionKey {
-  const text = normalize(`${title} ${description}`);
-
-  if (/\b(slowed|slowed reverb|reverb)\b/.test(text)) {
+  if (
+    /\b(slowed|slowed\s*\+\s*reverb|reverb)\b/.test(text)
+  )
     return "slowed";
-  }
 
   if (
-    /\b(sped up|speed up|speedup|sped-up|nightcore)\b/.test(text)
-  ) {
+    /\b(sped\s*up|speed\s*up|speedup|sped-up|nightcore)\b/.test(text)
+  )
     return "speedup";
-  }
 
   if (
-    /\b(instrumental|karaoke|backing track|no vocals)\b/.test(text)
-  ) {
+    /\b(instrumental|karaoke|backing\s*track|no\s*vocals)\b/.test(text)
+  )
     return "instrumental";
-  }
-
-  if (/\b(cover|covered by|cover version)\b/.test(text)) {
-    return "cover";
-  }
 
   if (
-    /\b(live|ao vivo|concert|festival|performance)\b/.test(text)
-  ) {
+    /\b(cover|covered\s*by|cover\s*version)\b/.test(text)
+  )
+    return "cover";
+
+  if (
+    /\b(live|ao\s*vivo|concert|festival|performance)\b/.test(text)
+  )
     return "live";
-  }
 
   if (
     /\b(remix|rework|bootleg|mashup|edit|flip)\b/.test(text)
-  ) {
+  )
     return "remix";
-  }
 
   return "original";
 }
 
 function resultToSong(item: any): Song | null {
   const id = item?.id?.videoId;
-  const snippet = item?.snippet;
+  const s = item?.snippet;
 
-  if (!id || !snippet) {
-    return null;
-  }
+  if (!id || !s) return null;
 
-  const title = String(snippet.title ?? "Sem título").replace(
-    /<[^>]*>/g,
-    ""
-  );
+  const title = String(
+    s.title ?? "Sem título"
+  ).replace(/<[^>]*>/g, "");
 
-  const description = String(snippet.description ?? "");
+  const description = String(s.description ?? "");
+
+  const thumbnail =
+    s.thumbnails?.high?.url ??
+    s.thumbnails?.medium?.url ??
+    s.thumbnails?.default?.url ??
+    `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 
   return {
     title,
-    artist: String(snippet.channelTitle ?? "YouTube"),
+    artist: String(s.channelTitle ?? "YouTube"),
     album: "YouTube",
     match: 50,
     youtubeId: id,
-    thumbnail:
-      snippet.thumbnails?.high?.url ??
-      snippet.thumbnails?.medium?.url ??
-      snippet.thumbnails?.default?.url ??
-      `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-    channel: String(snippet.channelTitle ?? "YouTube"),
+    thumbnail,
+    channel: String(s.channelTitle ?? "YouTube"),
     version: classifyVersion(title, description),
     description,
   };
+}
+
+/*
+ * FILTRO DE SHORTS
+ *
+ * Remove vídeos que tenham "Short", "Shorts",
+ * "Short Video" ou hashtags relacionadas no
+ * título, descrição ou canal.
+ */
+function isShort(song: Song) {
+  const raw = `${song.title} ${song.description ?? ""} ${song.channel}`;
+
+  const text = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return (
+    /\bshorts?\b/.test(text) ||
+    /\bshort video\b/.test(text) ||
+    /#shorts?\b/i.test(raw)
+  );
 }
 
 function formatTime(seconds: number) {
@@ -164,9 +169,9 @@ function formatTime(seconds: number) {
   }
 
   const minutes = Math.floor(seconds / 60);
-  const remaining = Math.floor(seconds % 60);
+  const secondsLeft = Math.floor(seconds % 60);
 
-  return `${minutes}:${remaining
+  return `${minutes}:${secondsLeft
     .toString()
     .padStart(2, "0")}`;
 }
@@ -175,51 +180,64 @@ export default function Home() {
   const apiKey =
     process.env.NEXT_PUBLIC_YOUTUBE_API_KEY ?? "";
 
-  const [mode, setMode] = useState<"setup" | "discover">(
-    "setup"
-  );
+  const [mode, setMode] =
+    useState<"setup" | "discover">("setup");
 
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<Song[]>([]);
   const [selected, setSelected] = useState<Song[]>([]);
-
-  const [preferences, setPreferences] = useState(
-    INITIAL_PREFERENCES
-  );
-
-  const [likedSongs, setLikedSongs] = useState<Song[]>([]);
-  const [passedSongs, setPassedSongs] = useState<Song[]>([]);
-
-  const [seenIds, setSeenIds] = useState<string[]>([]);
-
-  const [queue, setQueue] = useState<Song[]>([]);
-  const [index, setIndex] = useState(0);
-
   const [searching, setSearching] = useState(false);
-  const [loadingRecommendations, setLoadingRecommendations] =
-    useState(false);
-
   const [error, setError] = useState("");
 
+  const [preferences, setPreferences] =
+    useState<Record<VersionKey, Preference>>(
+      INITIAL_PREFERENCES
+    );
+
+  const [likedSongs, setLikedSongs] =
+    useState<Song[]>([]);
+
+  const [queue, setQueue] =
+    useState<Song[]>([]);
+
+  const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] =
+    useState(0);
+  const [duration, setDuration] =
+    useState(0);
+
+  const [loadingMore, setLoadingMore] =
+    useState(false);
 
   const playerRef = useRef<any>(null);
-  const playerHostRef = useRef<HTMLDivElement>(null);
+  const playerHostRef =
+    useRef<HTMLDivElement>(null);
+
   const timerRef =
-    useRef<ReturnType<typeof setInterval> | null>(null);
+    useRef<ReturnType<typeof setInterval> | null>(
+      null
+    );
 
-  const queueRef = useRef<Song[]>([]);
-  const indexRef = useRef(0);
+  const readyRef = useRef(false);
 
-  const preferencesRef = useRef(preferences);
-  const likedRef = useRef(likedSongs);
-  const passedRef = useRef(passedSongs);
-  const selectedRef = useRef(selected);
-  const seenRef = useRef(seenIds);
+  const queueRef =
+    useRef<Song[]>([]);
 
-  const recommendationBusyRef = useRef(false);
+  const indexRef =
+    useRef(0);
+
+  const searchingMoreRef =
+    useRef(false);
+
+  const preferencesRef =
+    useRef(preferences);
+
+  const likedSongsRef =
+    useRef(likedSongs);
+
+  const selectedRef =
+    useRef(selected);
 
   const currentSong = queue[index];
 
@@ -229,24 +247,19 @@ export default function Home() {
   }, [queue, index]);
 
   useEffect(() => {
-    preferencesRef.current = preferences;
+    preferencesRef.current =
+      preferences;
   }, [preferences]);
 
   useEffect(() => {
-    likedRef.current = likedSongs;
+    likedSongsRef.current =
+      likedSongs;
   }, [likedSongs]);
 
   useEffect(() => {
-    passedRef.current = passedSongs;
-  }, [passedSongs]);
-
-  useEffect(() => {
-    selectedRef.current = selected;
+    selectedRef.current =
+      selected;
   }, [selected]);
-
-  useEffect(() => {
-    seenRef.current = seenIds;
-  }, [seenIds]);
 
   function stopTimer() {
     if (timerRef.current) {
@@ -258,29 +271,37 @@ export default function Home() {
   function startTimer() {
     stopTimer();
 
-    timerRef.current = setInterval(() => {
-      try {
-        if (!playerRef.current) {
+    timerRef.current =
+      setInterval(() => {
+        const player =
+          playerRef.current;
+
+        if (!player || !readyRef.current)
           return;
-        }
 
-        const time = playerRef.current.getCurrentTime();
-        const total = playerRef.current.getDuration();
+        try {
+          const time =
+            player.getCurrentTime();
 
-        if (Number.isFinite(time)) {
-          setCurrentTime(time);
-        }
+          const total =
+            player.getDuration();
 
-        if (Number.isFinite(total) && total > 0) {
-          setDuration(total);
-        }
-      } catch {}
-    }, 250);
+          if (Number.isFinite(time)) {
+            setCurrentTime(time);
+          }
+
+          if (
+            Number.isFinite(total) &&
+            total > 0
+          ) {
+            setDuration(total);
+          }
+        } catch {}
+      }, 250);
   }
 
   async function youtubeSearch(
-    query: string,
-    maxResults = 10
+    query: string
   ): Promise<Song[]> {
     if (!apiKey) {
       throw new Error(
@@ -288,25 +309,33 @@ export default function Home() {
       );
     }
 
-    const params = new URLSearchParams({
-      part: "snippet",
-      q: query,
-      type: "video",
-      videoEmbeddable: "true",
-      videoSyndicated: "true",
-      safeSearch: "strict",
-      maxResults: String(Math.min(maxResults, 50)),
-      regionCode: "BR",
-      relevanceLanguage: "pt",
-      topicId: "/m/04rlf",
-      key: apiKey,
-    });
+    const params =
+      new URLSearchParams({
+        part: "snippet",
 
-    const response = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?${params}`
-    );
+        /*
+         * Também pedimos ao próprio YouTube
+         * para evitar Shorts quando possível.
+         */
+        q: `${query} -shorts -short`,
 
-    const data = await response.json();
+        type: "video",
+        videoEmbeddable: "true",
+        videoSyndicated: "true",
+        safeSearch: "strict",
+        maxResults: "10",
+        regionCode: "BR",
+        relevanceLanguage: "pt",
+        key: apiKey,
+      });
+
+    const response =
+      await fetch(
+        `https://www.googleapis.com/youtube/v3/search?${params}`
+      );
+
+    const data =
+      await response.json();
 
     if (!response.ok) {
       throw new Error(
@@ -315,9 +344,17 @@ export default function Home() {
       );
     }
 
+    /*
+     * Segundo filtro:
+     * mesmo que o YouTube devolva um Short,
+     * ele é eliminado aqui.
+     */
     return (data.items ?? [])
       .map(resultToSong)
-      .filter(Boolean) as Song[];
+      .filter(Boolean)
+      .filter(
+        (song: Song) => !isShort(song)
+      ) as Song[];
   }
 
   async function handleSearch(
@@ -325,28 +362,28 @@ export default function Home() {
   ) {
     event.preventDefault();
 
-    if (!search.trim()) {
-      return;
-    }
+    if (!search.trim()) return;
 
     setSearching(true);
     setError("");
 
     try {
-      const found = await youtubeSearch(
-        search.trim(),
-        10
-      );
+      const found =
+        await youtubeSearch(
+          search.trim()
+        );
 
       setResults(found);
 
       if (!found.length) {
-        setError("Nenhum resultado encontrado.");
+        setError(
+          "Nenhum resultado encontrado."
+        );
       }
-    } catch (err) {
+    } catch (e) {
       setError(
-        err instanceof Error
-          ? err.message
+        e instanceof Error
+          ? e.message
           : "Erro ao pesquisar."
       );
     } finally {
@@ -356,13 +393,17 @@ export default function Home() {
 
   function toggleSelected(song: Song) {
     setSelected((current) => {
-      const exists = current.some(
-        (item) => item.youtubeId === song.youtubeId
-      );
-
-      if (exists) {
+      if (
+        current.some(
+          (s) =>
+            s.youtubeId ===
+            song.youtubeId
+        )
+      ) {
         return current.filter(
-          (item) => item.youtubeId !== song.youtubeId
+          (s) =>
+            s.youtubeId !==
+            song.youtubeId
         );
       }
 
@@ -374,689 +415,441 @@ export default function Home() {
     });
   }
 
-  function updateVersionPreference(
-    version: VersionKey,
-    liked: boolean
+  function seedPreferences(
+    seeds: Song[]
   ) {
-    const next = {
-      ...preferencesRef.current,
-    };
+    setPreferences((current) => {
+      const next = { ...current };
 
-    if (!next[version].manual) {
-      next[version] = {
-        value: clamp(
-          next[version].value +
-            (liked ? 8 : -7)
-        ),
-        manual: false,
-      };
-    }
+      for (const song of seeds) {
+        if (
+          !next[song.version].manual
+        ) {
+          next[song.version] = {
+            value: clamp(
+              next[song.version].value +
+                8
+            ),
+            manual: false,
+          };
+        }
+      }
 
-    setPreferences(next);
-    preferencesRef.current = next;
-
-    return next;
+      return next;
+    });
   }
 
-  function learnFromSeeds(seeds: Song[]) {
-    const next = {
-      ...preferencesRef.current,
+  function preferenceScore(
+    song: Song,
+    prefs = preferences
+  ) {
+    return (
+      35 +
+      prefs[song.version].value *
+        0.65
+    );
+  }
+
+  function recommendationQuery(
+    seed: Song,
+    prefs = preferences
+  ) {
+    const best =
+      VERSION_KEYS
+        .map((key) => ({
+          key,
+          value:
+            prefs[key].value,
+        }))
+        .sort(
+          (a, b) =>
+            b.value - a.value
+        )[0];
+
+    const terms: Record<
+      VersionKey,
+      string
+    > = {
+      remix: "remix",
+      original: "official audio",
+      live: "live",
+      cover: "cover",
+      slowed:
+        "slowed reverb",
+      speedup: "sped up",
+      instrumental:
+        "instrumental",
     };
 
-    for (const song of seeds) {
-      if (!next[song.version].manual) {
-        next[song.version] = {
+    const versionTerm =
+      best.value >= 68
+        ? terms[best.key]
+        : "";
+
+    return `${seed.artist} ${seed.title} ${versionTerm}`
+      .trim();
+  }
+
+  async function getRecommendations(
+    seed: Song,
+    prefs: Record<
+      VersionKey,
+      Preference
+    >,
+    existing: Song[]
+  ) {
+    if (
+      !apiKey ||
+      searchingMoreRef.current
+    ) {
+      return [];
+    }
+
+    searchingMoreRef.current =
+      true;
+
+    setLoadingMore(true);
+
+    try {
+      const found =
+        await youtubeSearch(
+          recommendationQuery(
+            seed,
+            prefs
+          )
+        );
+
+      const ids =
+        new Set(
+          existing.map(
+            (s) => s.youtubeId
+          )
+        );
+
+      return found
+        .filter(
+          (song) =>
+            !ids.has(
+              song.youtubeId
+            )
+        )
+        .filter(
+          (song) =>
+            !isShort(song)
+        )
+        .map((song) => ({
+          ...song,
+          match: Math.round(
+            clamp(
+              35 +
+                prefs[
+                  song.version
+                ].value *
+                  0.65
+            )
+          ),
+        }))
+        .sort(
+          (a, b) =>
+            preferenceScore(
+              b,
+              prefs
+            ) -
+            preferenceScore(
+              a,
+              prefs
+            )
+        );
+    } finally {
+      searchingMoreRef.current =
+        false;
+
+      setLoadingMore(false);
+    }
+  }
+
+  async function startDiscovery() {
+    if (selected.length !== 4)
+      return;
+
+    seedPreferences(selected);
+
+    const seededPrefs = {
+      ...preferences,
+    };
+
+    for (const song of selected) {
+      if (
+        !seededPrefs[
+          song.version
+        ].manual
+      ) {
+        seededPrefs[
+          song.version
+        ] = {
           value: clamp(
-            next[song.version].value + 8
+            seededPrefs[
+              song.version
+            ].value + 8
           ),
           manual: false,
         };
       }
     }
 
-    setPreferences(next);
-    preferencesRef.current = next;
-
-    return next;
-  }
-
-  function getPreferredVersion(
-    prefs: Record<VersionKey, Preference>
-  ) {
-    return [...VERSION_KEYS].sort(
-      (a, b) =>
-        prefs[b].value - prefs[a].value
-    )[0];
-  }
-
-  function versionSearchTerm(
-    version: VersionKey
-  ) {
-    return {
-      remix: "remix",
-      original: "official audio",
-      live: "live performance",
-      cover: "cover",
-      slowed: "slowed reverb",
-      speedup: "sped up",
-      instrumental: "instrumental",
-    }[version];
-  }
-
-  function calculateSimilarity(
-    candidate: Song,
-    seeds: Song[],
-    prefs: Record<VersionKey, Preference>
-  ) {
-    const candidateArtist =
-      normalize(candidate.artist);
-
-    const candidateTitleWords = new Set(
-      normalize(candidate.title)
-        .split(" ")
-        .filter((word) => word.length >= 3)
-    );
-
-    let bestScore = 0;
-
-    for (const seed of seeds) {
-      const seedArtist = normalize(seed.artist);
-      const seedTitleWords = normalize(seed.title)
-        .split(" ")
-        .filter((word) => word.length >= 3);
-
-      let score = 0;
-
-      if (candidateArtist === seedArtist) {
-        score += 35;
-      } else if (
-        candidateArtist.includes(seedArtist) ||
-        seedArtist.includes(candidateArtist)
-      ) {
-        score += 20;
-      }
-
-      let commonWords = 0;
-
-      for (const word of seedTitleWords) {
-        if (candidateTitleWords.has(word)) {
-          commonWords++;
-        }
-      }
-
-      score += Math.min(
-        25,
-        commonWords * 7
-      );
-
-      if (
-        candidate.version ===
-        seed.version
-      ) {
-        score += 8;
-      }
-
-      bestScore = Math.max(
-        bestScore,
-        score
-      );
-    }
-
-    const versionPreference =
-      prefs[candidate.version].value;
-
-    return (
-      bestScore +
-      versionPreference * 0.45
-    );
-  }
-
-  function calculateCandidateScore(
-    candidate: Song,
-    seeds: Song[],
-    prefs: Record<VersionKey, Preference>,
-    allCandidates: Song[]
-  ) {
-    let score = calculateSimilarity(
-      candidate,
-      seeds,
-      prefs
-    );
-
-    const artist = normalize(
-      candidate.artist
-    );
-
-    const sameArtistCount =
-      allCandidates.filter(
-        (song) =>
-          normalize(song.artist) === artist
-      ).length;
-
-    score -= Math.min(
-      25,
-      Math.max(0, sameArtistCount - 1) * 7
-    );
-
-    const alreadyLikedArtist =
-      likedRef.current.some(
-        (song) =>
-          normalize(song.artist) === artist
-      );
-
-    if (alreadyLikedArtist) {
-      score += 12;
-    }
-
-    const passedArtist =
-      passedRef.current.some(
-        (song) =>
-          normalize(song.artist) === artist
-      );
-
-    if (passedArtist) {
-      score -= 18;
-    }
-
-    // Pequena exploração para não deixar o algoritmo
-    // sempre escolher exatamente os mesmos resultados.
-    score += Math.random() * 15;
-
-    return score;
-  }
-
-  async function searchRecommendationCandidates(
-    seeds: Song[],
-    prefs: Record<VersionKey, Preference>
-  ) {
-    const preferredVersion =
-      getPreferredVersion(prefs);
-
-    const queries: string[] = [];
-
-    /*
-      IMPORTANTE:
-
-      Não pesquisamos mais:
-      "artista + música + remix"
-
-      Isso fazia o YouTube devolver:
-      mesma música remix
-      mesma música slowed
-      mesma música live
-
-      Agora usamos principalmente o ARTISTA,
-      termos gerais e exploração.
-    */
-
-    for (const seed of seeds.slice(-6)) {
-      const artist = normalize(
-        seed.artist
-      );
-
-      queries.push(
-        `${artist} songs -${normalize(seed.title)}`
-      );
-
-      queries.push(
-        `${artist} music ${versionSearchTerm(
-          preferredVersion
-        )} -${normalize(seed.title)}`
-      );
-    }
-
-    const artists = seeds
-      .map((song) =>
-        normalize(song.artist)
-      )
-      .filter(Boolean)
-      .slice(0, 4);
-
-    if (artists.length) {
-      queries.push(
-        `songs similar to ${artists.join(
-          " "
-        )} ${versionSearchTerm(
-          preferredVersion
-        )}`
-      );
-    }
-
-    /*
-      Busca mais aberta para aumentar a descoberta
-      de artistas diferentes.
-    */
-    queries.push(
-      `new music similar to ${artists
-        .slice(0, 3)
-        .join(" ")}`
-    );
-
-    const uniqueQueries = [
-      ...new Set(queries),
-    ].slice(0, 5);
-
-    const batches = await Promise.all(
-      uniqueQueries.map((query) =>
-        youtubeSearch(query, 10)
-      )
-    );
-
-    return batches.flat();
-  }
-
-  async function getRecommendations(
-    seeds: Song[],
-    prefs: Record<VersionKey, Preference>,
-    excludedIds: string[]
-  ) {
-    if (
-      !apiKey ||
-      recommendationBusyRef.current
-    ) {
-      return [];
-    }
-
-    recommendationBusyRef.current = true;
-    setLoadingRecommendations(true);
-
-    try {
-      const excluded =
-        new Set(excludedIds);
-
-      const rawCandidates =
-        await searchRecommendationCandidates(
-          seeds,
-          prefs
-        );
-
-      /*
-        Remove duplicatas e tudo que já apareceu.
-      */
-      const uniqueMap =
-        new Map<string, Song>();
-
-      for (const song of rawCandidates) {
-        if (
-          excluded.has(song.youtubeId)
-        ) {
-          continue;
-        }
-
-        uniqueMap.set(
-          song.youtubeId,
-          song
-        );
-      }
-
-      const candidates = [
-        ...uniqueMap.values(),
-      ];
-
-      /*
-        Primeiro fazemos o ranking.
-      */
-      const ranked = candidates
-        .map((song) => ({
-          song,
-          score:
-            calculateCandidateScore(
-              song,
-              seeds,
-              prefs,
-              candidates
-            ),
-        }))
-        .sort(
-          (a, b) =>
-            b.score - a.score
-        );
-
-      /*
-        Depois limitamos a quantidade do mesmo artista.
-      */
-      const artistCount =
-        new Map<string, number>();
-
-      const recommendations: Song[] = [];
-
-      for (const item of ranked) {
-        const artist = normalize(
-          item.song.artist
-        );
-
-        const count =
-          artistCount.get(artist) ?? 0;
-
-        if (count >= 2) {
-          continue;
-        }
-
-        recommendations.push({
-          ...item.song,
-          match: Math.round(
-            clamp(item.score)
-          ),
-        });
-
-        artistCount.set(
-          artist,
-          count + 1
-        );
-
-        if (
-          recommendations.length >= 10
-        ) {
-          break;
-        }
-      }
-
-      return recommendations;
-    } finally {
-      recommendationBusyRef.current =
-        false;
-
-      setLoadingRecommendations(false);
-    }
-  }
-
-  async function startDiscovery() {
-    if (selected.length !== 4) {
-      return;
-    }
-
-    /*
-      As 4 músicas participam do perfil inicial.
-    */
-    const seededPreferences =
-      learnFromSeeds(selected);
-
-    const initialSeen =
-      selected.map(
-        (song) => song.youtubeId
-      );
-
-    setSeenIds(initialSeen);
-    seenRef.current = initialSeen;
+    const firstSeed =
+      selected[0];
 
     const recommendations =
-      await getRecommendations(
-        selected,
-        seededPreferences,
-        initialSeen
-      );
+      firstSeed
+        ? await getRecommendations(
+            firstSeed,
+            seededPrefs,
+            selected
+          )
+        : [];
 
-    setQueue(recommendations);
-    queueRef.current =
-      recommendations;
+    setQueue(
+      recommendations
+    );
 
     setIndex(0);
-    indexRef.current = 0;
-
     setLikedSongs([]);
-    likedRef.current = [];
-
-    setPassedSongs([]);
-    passedRef.current = [];
-
     setCurrentTime(0);
     setDuration(0);
     setPlaying(false);
-
     setMode("discover");
   }
 
-  async function advance(
+  function updateFromFeedback(
+    version: VersionKey,
     liked: boolean
   ) {
-    const song =
-      queueRef.current[
-        indexRef.current
-      ];
-
-    if (!song) {
-      return;
-    }
-
-    /*
-      Aprende imediatamente com a escolha.
-    */
-    const nextPreferences =
-      updateVersionPreference(
-        song.version,
-        liked
-      );
-
-    if (liked) {
+    setPreferences((current) => {
       if (
-        !likedRef.current.some(
-          (item) =>
-            item.youtubeId ===
-            song.youtubeId
-        )
+        current[version].manual
       ) {
-        const nextLiked = [
-          ...likedRef.current,
-          song,
-        ];
-
-        setLikedSongs(nextLiked);
-        likedRef.current =
-          nextLiked;
+        return current;
       }
-    } else {
-      const nextPassed = [
-        ...passedRef.current,
-        song,
-      ];
 
-      setPassedSongs(nextPassed);
-      passedRef.current =
-        nextPassed;
-    }
+      return {
+        ...current,
 
-    /*
-      Essa música nunca volta para a fila.
-    */
-    const nextSeen = [
-      ...new Set([
-        ...seenRef.current,
-        song.youtubeId,
-      ]),
-    ];
+        [version]: {
+          value: clamp(
+            current[version].value +
+              (liked ? 8 : -6)
+          ),
+          manual: false,
+        },
+      };
+    });
+  }
 
-    setSeenIds(nextSeen);
-    seenRef.current = nextSeen;
+  function setManual(
+    key: VersionKey,
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    setPreferences((current) => ({
+      ...current,
 
+      [key]: {
+        value: clamp(
+          Number(event.target.value)
+        ),
+        manual: true,
+      },
+    }));
+  }
+
+  function resetManual(
+    key: VersionKey
+  ) {
+    setPreferences((current) => ({
+      ...current,
+
+      [key]: {
+        ...current[key],
+        manual: false,
+      },
+    }));
+  }
+
+  function resetAllManual() {
+    setPreferences((current) => {
+      const next = {
+        ...current,
+      };
+
+      for (const key of VERSION_KEYS) {
+        next[key] = {
+          ...next[key],
+          manual: false,
+        };
+      }
+
+      return next;
+    });
+  }
+
+  async function nextSong() {
     const nextIndex =
       indexRef.current + 1;
 
-    /*
-      Ainda existem músicas na fila.
-    */
     if (
       nextIndex <
       queueRef.current.length
     ) {
       setIndex(nextIndex);
-      indexRef.current =
-        nextIndex;
 
-      /*
-        Quando restarem poucas músicas,
-        buscamos mais usando o aprendizado
-        mais recente.
-      */
       if (
         queueRef.current.length -
           nextIndex <=
-        3
+          3 &&
+        currentSong
       ) {
-        const seeds = [
-          ...selectedRef.current,
-          ...likedRef.current.slice(-5),
-        ].slice(-8);
-
         const additions =
           await getRecommendations(
-            seeds,
-            nextPreferences,
-            seenRef.current
+            currentSong,
+            preferencesRef.current,
+            queueRef.current
           );
 
-        const seenSet =
-          new Set(seenRef.current);
+        if (additions.length) {
+          setQueue((current) => {
+            const ids =
+              new Set(
+                current.map(
+                  (s) =>
+                    s.youtubeId
+                )
+              );
 
-        const newSongs =
-          additions.filter(
-            (item) =>
-              !seenSet.has(
-                item.youtubeId
-              )
-          );
-
-        if (newSongs.length) {
-          const nextQueue = [
-            ...queueRef.current,
-            ...newSongs,
-          ];
-
-          setQueue(nextQueue);
-          queueRef.current =
-            nextQueue;
-
-          const expandedSeen = [
-            ...seenRef.current,
-            ...newSongs.map(
-              (song) =>
-                song.youtubeId
-            ),
-          ];
-
-          setSeenIds(
-            expandedSeen
-          );
-
-          seenRef.current =
-            expandedSeen;
+            return [
+              ...current,
+              ...additions.filter(
+                (s) =>
+                  !ids.has(
+                    s.youtubeId
+                  )
+              ),
+            ];
+          });
         }
       }
 
       return;
     }
 
-    /*
-      A fila terminou.
-      Criamos uma nova usando todo o aprendizado.
-    */
-    const seeds = [
-      ...selectedRef.current,
-      ...likedRef.current.slice(-6),
-    ].slice(-10);
+    const seed =
+      likedSongsRef.current[
+        likedSongsRef.current
+          .length - 1
+      ] ??
+      selectedRef.current[
+        selectedRef.current
+          .length - 1
+      ];
+
+    if (!seed) return;
 
     const additions =
       await getRecommendations(
-        seeds,
-        nextPreferences,
-        seenRef.current
+        seed,
+        preferencesRef.current,
+        queueRef.current
       );
 
     if (additions.length) {
       const firstNewIndex =
         queueRef.current.length;
 
-      const nextQueue = [
-        ...queueRef.current,
+      setQueue((current) => [
+        ...current,
         ...additions,
-      ];
+      ]);
 
-      setQueue(nextQueue);
-      queueRef.current =
-        nextQueue;
-
-      setIndex(
-        firstNewIndex
-      );
-
-      indexRef.current =
-        firstNewIndex;
-
-      const expandedSeen = [
-        ...seenRef.current,
-        ...additions.map(
-          (song) =>
-            song.youtubeId
-        ),
-      ];
-
-      setSeenIds(
-        expandedSeen
-      );
-
-      seenRef.current =
-        expandedSeen;
+      setIndex(firstNewIndex);
     }
   }
 
   async function likeSong() {
-    await advance(true);
+    if (!currentSong) return;
+
+    setLikedSongs((current) =>
+      current.some(
+        (s) =>
+          s.youtubeId ===
+          currentSong.youtubeId
+      )
+        ? current
+        : [
+            ...current,
+            currentSong,
+          ]
+    );
+
+    updateFromFeedback(
+      currentSong.version,
+      true
+    );
+
+    await nextSong();
   }
 
   async function passSong() {
-    await advance(false);
+    if (!currentSong) return;
+
+    updateFromFeedback(
+      currentSong.version,
+      false
+    );
+
+    await nextSong();
   }
 
-  function setManualPreference(
+  function handlePreferenceKeyDown(
     key: VersionKey,
-    value: number
+    event: KeyboardEvent<HTMLInputElement>
   ) {
-    const next = {
-      ...preferencesRef.current,
-      [key]: {
-        value: clamp(value),
-        manual: true,
-      },
-    };
-
-    setPreferences(next);
-    preferencesRef.current =
-      next;
-  }
-
-  function resetAutomaticPreferences() {
-    const next = {
-      ...preferencesRef.current,
-    };
-
-    for (const key of VERSION_KEYS) {
-      next[key] = {
-        ...next[key],
-        manual: false,
-      };
+    if (
+      event.key === "Enter" ||
+      event.key === " "
+    ) {
+      event.stopPropagation();
     }
 
-    setPreferences(next);
-    preferencesRef.current =
-      next;
+    if (
+      !preferences[key].manual
+    ) {
+      setPreferences((current) => ({
+        ...current,
+
+        [key]: {
+          ...current[key],
+          manual: true,
+        },
+      }));
+    }
   }
 
-  /*
-    YouTube IFrame Player.
-  */
   useEffect(() => {
-    if (mode !== "discover") {
+    if (mode !== "discover")
       return;
-    }
 
     const createPlayer = () => {
       if (
         !playerHostRef.current ||
         !window.YT?.Player ||
-        playerRef.current ||
-        !queueRef.current[0]
+        playerRef.current
       ) {
         return;
       }
+
+      const firstSong =
+        queueRef.current[0];
+
+      if (!firstSong) return;
 
       playerRef.current =
         new window.YT.Player(
@@ -1065,8 +858,8 @@ export default function Home() {
             width: "100%",
             height: "100%",
             videoId:
-              queueRef.current[0]
-                .youtubeId,
+              firstSong.youtubeId,
+
             playerVars: {
               playsinline: 1,
               controls: 0,
@@ -1074,21 +867,36 @@ export default function Home() {
               iv_load_policy: 3,
               disablekb: 1,
             },
+
             events: {
               onReady: (event: any) => {
+                readyRef.current =
+                  true;
+
                 const total =
                   event.target.getDuration();
 
                 if (
-                  Number.isFinite(total)
+                  Number.isFinite(
+                    total
+                  )
                 ) {
-                  setDuration(total);
+                  setDuration(
+                    total
+                  );
                 }
               },
 
               onStateChange: (
                 event: any
               ) => {
+                if (
+                  !window.YT
+                    ?.PlayerState
+                ) {
+                  return;
+                }
+
                 if (
                   event.data ===
                   window.YT
@@ -1113,7 +921,9 @@ export default function Home() {
                 ) {
                   setPlaying(false);
                   stopTimer();
-                  void advance(false);
+                  setCurrentTime(0);
+
+                  void nextSong();
                 }
               },
             },
@@ -1151,28 +961,37 @@ export default function Home() {
     return () => {
       stopTimer();
 
-      try {
-        playerRef.current?.destroy();
-      } catch {}
+      readyRef.current =
+        false;
 
-      playerRef.current = null;
+      if (playerRef.current) {
+        try {
+          playerRef.current.destroy();
+        } catch {}
+
+        playerRef.current = null;
+      }
     };
   }, [mode]);
 
-  /*
-    Troca o vídeo quando muda a música.
-  */
   useEffect(() => {
+    const player =
+      playerRef.current;
+
+    const song =
+      queue[index];
+
     if (
-      !playerRef.current ||
-      !currentSong
+      !player ||
+      !readyRef.current ||
+      !song
     ) {
       return;
     }
 
     try {
-      playerRef.current.loadVideoById(
-        currentSong.youtubeId
+      player.loadVideoById(
+        song.youtubeId
       );
 
       setCurrentTime(0);
@@ -1184,24 +1003,28 @@ export default function Home() {
   }, [index]);
 
   function togglePlay() {
+    const player =
+      playerRef.current;
+
     if (
-      !playerRef.current ||
+      !player ||
+      !readyRef.current ||
       !window.YT
     ) {
       return;
     }
 
     try {
-      const state =
-        playerRef.current.getPlayerState();
-
       if (
-        state ===
-        window.YT.PlayerState.PLAYING
+        player.getPlayerState() ===
+        window.YT.PlayerState
+          .PLAYING
       ) {
-        playerRef.current.pauseVideo();
+        player.pauseVideo();
+        setPlaying(false);
       } else {
-        playerRef.current.playVideo();
+        player.playVideo();
+        setPlaying(true);
       }
     } catch {}
   }
@@ -1211,6 +1034,7 @@ export default function Home() {
   ) {
     if (
       !playerRef.current ||
+      !readyRef.current ||
       duration <= 0
     ) {
       return;
@@ -1219,16 +1043,14 @@ export default function Home() {
     const rect =
       event.currentTarget.getBoundingClientRect();
 
-    const percentage = clamp(
-      ((event.clientX -
+    const percent = clamp(
+      (event.clientX -
         rect.left) /
-        rect.width) *
-        100
+        rect.width
     );
 
     const newTime =
-      (percentage / 100) *
-      duration;
+      percent * duration;
 
     try {
       playerRef.current.seekTo(
@@ -1236,17 +1058,32 @@ export default function Home() {
         true
       );
 
-      setCurrentTime(newTime);
+      setCurrentTime(
+        newTime
+      );
     } catch {}
   }
 
-  /*
-    TELA INICIAL
-  */
+  const progress =
+    duration > 0
+      ? clamp(
+          (currentTime /
+            duration) *
+            100
+        )
+      : 0;
+
+  const manualCount =
+    VERSION_KEYS.filter(
+      (key) =>
+        preferences[key].manual
+    ).length;
+
   if (mode === "setup") {
     return (
       <main className="min-h-screen bg-[#09090b] text-white">
         <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-8">
+
           <header>
             <h1 className="text-3xl font-bold tracking-tight">
               Music
@@ -1256,26 +1093,25 @@ export default function Home() {
             </h1>
 
             <p className="mt-1 text-sm text-zinc-500">
-              Descubra músicas que combinam
-              com você
+              Descubra músicas que combinam com você
             </p>
           </header>
 
           <section className="flex flex-1 flex-col justify-center py-10">
+
             <div className="mb-8 text-center">
               <p className="text-sm font-medium text-pink-400">
                 Primeiro passo
               </p>
 
               <h2 className="mt-2 text-3xl font-bold">
-                Escolha 4 músicas que você
-                gosta
+                Escolha 4 músicas que você gosta
               </h2>
 
               <p className="mx-auto mt-3 max-w-xl text-zinc-500">
-                Essas músicas são o ponto de
-                partida. Depois, seus Likes e
-                Passes ensinam o algoritmo.
+                Suas escolhas ensinam o MusicSwipe
+                sobre seu gosto e sobre os tipos
+                de versão que você prefere.
               </p>
             </div>
 
@@ -1285,9 +1121,9 @@ export default function Home() {
             >
               <input
                 value={search}
-                onChange={(event) =>
+                onChange={(e) =>
                   setSearch(
-                    event.target.value
+                    e.target.value
                   )
                 }
                 placeholder="Pesquise uma música, artista ou álbum..."
@@ -1320,69 +1156,77 @@ export default function Home() {
             )}
 
             <div className="mt-8 grid gap-3">
-              {results.map((song) => {
-                const isSelected =
-                  selected.some(
-                    (item) =>
-                      item.youtubeId ===
-                      song.youtubeId
-                  );
+              {results.map(
+                (song) => {
+                  const isSelected =
+                    selected.some(
+                      (s) =>
+                        s.youtubeId ===
+                        song.youtubeId
+                    );
 
-                return (
-                  <button
-                    key={
-                      song.youtubeId
-                    }
-                    type="button"
-                    onClick={() =>
-                      toggleSelected(song)
-                    }
-                    className={`flex items-center gap-4 rounded-2xl border p-3 text-left transition ${
-                      isSelected
-                        ? "border-pink-500 bg-pink-500/10"
-                        : "border-zinc-800 bg-zinc-900/70 hover:border-zinc-700"
-                    }`}
-                  >
-                    <img
-                      src={
-                        song.thumbnail
+                  return (
+                    <button
+                      key={
+                        song.youtubeId
                       }
-                      alt=""
-                      className="h-16 w-16 shrink-0 rounded-xl object-cover"
-                    />
-
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">
-                        {song.title}
-                      </span>
-
-                      <span className="mt-1 block truncate text-sm text-zinc-500">
-                        {song.channel}
-                      </span>
-
-                      <span className="mt-1 inline-block rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
-                        {
-                          VERSION_LABELS[
-                            song.version
-                          ]
-                        }
-                      </span>
-                    </span>
-
-                    <span
-                      className={`rounded-full px-3 py-2 text-xs font-semibold ${
+                      type="button"
+                      onClick={() =>
+                        toggleSelected(
+                          song
+                        )
+                      }
+                      className={`flex items-center gap-4 rounded-2xl border p-3 text-left transition ${
                         isSelected
-                          ? "bg-pink-500 text-black"
-                          : "bg-zinc-800 text-zinc-300"
+                          ? "border-pink-500 bg-pink-500/10"
+                          : "border-zinc-800 bg-zinc-900/70 hover:border-zinc-700"
                       }`}
                     >
-                      {isSelected
-                        ? "Selecionada"
-                        : "Selecionar"}
-                    </span>
-                  </button>
-                );
-              })}
+                      <img
+                        src={
+                          song.thumbnail
+                        }
+                        alt=""
+                        className="h-16 w-16 shrink-0 rounded-xl object-cover"
+                      />
+
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-semibold">
+                          {
+                            song.title
+                          }
+                        </span>
+
+                        <span className="mt-1 block truncate text-sm text-zinc-500">
+                          {
+                            song.channel
+                          }
+                        </span>
+
+                        <span className="mt-1 inline-block rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
+                          {
+                            VERSION_LABELS[
+                              song.version
+                            ]
+                          }
+                        </span>
+                      </span>
+
+                      <span
+                        className={`rounded-full px-3 py-2 text-xs font-semibold ${
+                          isSelected
+                            ? "bg-pink-500 text-black"
+                            : "bg-zinc-800 text-zinc-300"
+                        }`}
+                      >
+                        {isSelected
+                          ? "Selecionada"
+                          : "Selecionar"}
+                      </span>
+                    </button>
+                  );
+                }
+              )}
             </div>
 
             <div className="mt-8 flex flex-col items-center gap-3">
@@ -1395,19 +1239,17 @@ export default function Home() {
                 type="button"
                 disabled={
                   selected.length !==
-                    4 ||
-                  loadingRecommendations
+                  4
                 }
                 onClick={() =>
                   void startDiscovery()
                 }
                 className="rounded-full bg-pink-500 px-8 py-4 font-bold text-black shadow-lg shadow-pink-500/20 transition hover:bg-pink-400 disabled:cursor-not-allowed disabled:opacity-30"
               >
-                {loadingRecommendations
-                  ? "Montando recomendações..."
-                  : "Começar a descobrir"}
+                Começar a descobrir
               </button>
             </div>
+
           </section>
 
           <footer className="pb-2 text-center text-xs text-zinc-700">
@@ -1418,45 +1260,38 @@ export default function Home() {
     );
   }
 
-  /*
-    SEM RECOMENDAÇÕES
-  */
   if (!currentSong) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#09090b] text-white">
-        <div className="text-center">
-          <p className="text-zinc-400">
-            Não encontramos recomendações
-            suficientes.
-          </p>
+      <main className="min-h-screen bg-[#09090b] text-white">
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="text-center">
 
-          <button
-            type="button"
-            onClick={() =>
-              setMode("setup")
-            }
-            className="mt-4 rounded-full bg-pink-500 px-5 py-3 font-semibold text-black"
-          >
-            Voltar para a busca
-          </button>
+            <p className="text-zinc-400">
+              Não encontramos recomendações suficientes.
+            </p>
+
+            <button
+              type="button"
+              onClick={() =>
+                setMode("setup")
+              }
+              className="mt-4 rounded-full bg-pink-500 px-5 py-3 font-semibold text-black"
+            >
+              Voltar para a busca
+            </button>
+
+          </div>
         </div>
       </main>
     );
   }
 
-  const progress =
-    duration > 0
-      ? clamp(
-          (currentTime /
-            duration) *
-            100
-        )
-      : 0;
-
   return (
     <main className="min-h-screen bg-[#09090b] text-white">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-6 py-6">
+
         <header className="flex items-center justify-between">
+
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
               Music
@@ -1466,116 +1301,163 @@ export default function Home() {
             </h1>
 
             <p className="mt-1 text-sm text-zinc-500">
-              Descubra músicas que combinam
-              com você
+              Descubra músicas que combinam com você
             </p>
           </div>
 
           <div className="rounded-full border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm text-zinc-300">
             ❤️ {likedSongs.length} curtidas
           </div>
+
         </header>
 
         <div className="flex flex-1 flex-col items-center justify-center gap-6 py-8 xl:flex-row">
+
           {/* PREFERÊNCIAS */}
 
           <aside className="order-2 w-full max-w-sm xl:order-1 xl:w-64">
+
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+
               <div className="flex items-start justify-between gap-3">
+
                 <div>
                   <h3 className="font-semibold">
                     Preferências
                   </h3>
 
                   <p className="mt-1 text-xs text-zinc-500">
-                    Aprendidas automaticamente
-                    pelos seus Likes e Passes.
+                    O algoritmo aprende enquanto você usa.
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={
-                    resetAutomaticPreferences
-                  }
-                  className="text-xs text-zinc-500 hover:text-white"
-                >
-                  Automático
-                </button>
+                {manualCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={
+                      resetAllManual
+                    }
+                    className="text-xs text-zinc-500 hover:text-white"
+                  >
+                    Automático
+                  </button>
+                )}
+
               </div>
 
               <div className="mt-5 space-y-4">
+
                 {VERSION_KEYS.map(
                   (key) => {
-                    const preference =
-                      preferences[key];
+                    const pref =
+                      preferences[
+                        key
+                      ];
 
                     return (
-                      <div key={key}>
+                      <div
+                        key={key}
+                      >
                         <div className="mb-1 flex items-center justify-between">
-                          <span className="text-sm text-zinc-300">
+
+                          <label
+                            htmlFor={`pref-${key}`}
+                            className="text-sm text-zinc-300"
+                          >
                             {
                               VERSION_LABELS[
                                 key
                               ]
                             }
-                          </span>
+                          </label>
 
-                          <span className="text-xs text-zinc-500">
-                            {Math.round(
-                              preference.value
-                            )}
-                            %
-                          </span>
+                          <div className="flex items-center gap-2">
+
+                            <span
+                              className={`text-[10px] ${
+                                pref.manual
+                                  ? "text-pink-400"
+                                  : "text-zinc-600"
+                              }`}
+                            >
+                              {pref.manual
+                                ? "Manual"
+                                : "Auto"}
+                            </span>
+
+                            <span className="w-8 text-right text-xs text-zinc-500">
+                              {Math.round(
+                                pref.value
+                              )}
+                              %
+                            </span>
+
+                          </div>
+
                         </div>
 
                         <input
+                          id={`pref-${key}`}
                           type="range"
                           min="0"
                           max="100"
                           value={
-                            preference.value
+                            pref.value
                           }
-                          onChange={(
-                            event
-                          ) =>
-                            setManualPreference(
+                          onChange={(e) =>
+                            setManual(
                               key,
-                              Number(
-                                event
-                                  .target
-                                  .value
-                              )
+                              e
+                            )
+                          }
+                          onKeyDown={(e) =>
+                            handlePreferenceKeyDown(
+                              key,
+                              e
                             )
                           }
                           className="w-full accent-pink-500"
                         />
 
-                        {preference.manual && (
-                          <span className="text-[10px] text-pink-400">
-                            Manual
-                          </span>
+                        {pref.manual && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              resetManual(
+                                key
+                              )
+                            }
+                            className="mt-1 text-[11px] text-zinc-600 hover:text-pink-400"
+                          >
+                            ↺ Voltar ao automático
+                          </button>
                         )}
+
                       </div>
                     );
                   }
                 )}
+
               </div>
 
               <div className="mt-5 rounded-xl bg-zinc-950/70 p-3 text-xs leading-relaxed text-zinc-500">
-                Essas preferências influenciam
-                quais versões aparecem. Elas
-                mudam automaticamente conforme
-                você usa o MusicSwipe.
+                Mude uma barra a qualquer momento.
+                Não precisa recarregar a página e
+                os seus Likes continuam salvos.
               </div>
+
             </div>
+
           </aside>
 
           {/* CARD PRINCIPAL */}
 
           <section className="order-1 w-full max-w-sm xl:order-2">
+
             <div className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+
               <div className="relative aspect-square w-full overflow-hidden bg-black">
+
                 <div
                   ref={
                     playerHostRef
@@ -1583,17 +1465,19 @@ export default function Home() {
                   className="absolute inset-0 h-full w-full"
                 />
 
+                <div className="absolute inset-0 z-10" />
+
                 <div className="absolute left-4 top-4 z-30 rounded-full bg-black/70 px-3 py-1.5 text-sm font-semibold backdrop-blur">
                   {currentSong.match}%
                   compatível
                 </div>
 
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black via-black/80 to-transparent px-6 pb-5 pt-32">
+
                   <p className="text-sm text-zinc-300">
                     {
                       VERSION_LABELS[
-                        currentSong
-                          .version
+                        currentSong.version
                       ]
                     }
                   </p>
@@ -1609,23 +1493,26 @@ export default function Home() {
                       currentSong.artist
                     }
                   </p>
+
                 </div>
+
               </div>
 
-              {/* PROGRESSO */}
-
               <div className="px-5 pt-5">
+
                 <div
                   onClick={seek}
                   className="group flex h-5 cursor-pointer items-center"
                 >
                   <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-700 transition-all group-hover:h-2">
+
                     <div
                       className="absolute left-0 top-0 h-full rounded-full bg-pink-500"
                       style={{
                         width: `${progress}%`,
                       }}
                     />
+
                   </div>
                 </div>
 
@@ -1642,13 +1529,12 @@ export default function Home() {
                     )}
                   </span>
                 </div>
+
               </div>
 
-              {/* PLAY */}
-
               <div className="px-5 py-5">
+
                 <button
-                  type="button"
                   onClick={
                     togglePlay
                   }
@@ -1663,14 +1549,14 @@ export default function Home() {
                     ? "❚❚"
                     : "▶"}
                 </button>
+
               </div>
+
             </div>
 
-            {/* BOTÕES */}
-
             <div className="mt-6 flex items-center justify-center gap-6">
+
               <button
-                type="button"
                 onClick={() =>
                   void passSong()
                 }
@@ -1681,7 +1567,6 @@ export default function Home() {
               </button>
 
               <button
-                type="button"
                 onClick={() =>
                   void likeSong()
                 }
@@ -1692,52 +1577,67 @@ export default function Home() {
               </button>
 
               <button
-                type="button"
                 onClick={() =>
-                  void passSong()
+                  void nextSong()
                 }
                 aria-label="Próxima"
                 className="flex h-16 w-16 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-2xl transition hover:scale-110"
               >
                 ⏭️
               </button>
+
             </div>
 
-            {loadingRecommendations && (
-              <p className="mt-4 text-center text-xs text-zinc-600">
-                Encontrando músicas diferentes...
+            <p className="mt-5 text-center text-xs text-zinc-600">
+              ❌ Passar &nbsp; • &nbsp;
+              ❤️ Curtir &nbsp; • &nbsp;
+              ▶ Play/Pause
+            </p>
+
+            {loadingMore && (
+              <p className="mt-3 text-center text-xs text-zinc-700">
+                Encontrando mais músicas...
               </p>
             )}
+
           </section>
 
           {/* CURTIDAS */}
 
           <aside className="order-3 w-full max-w-sm xl:w-80">
+
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+
               <div className="flex items-center justify-between">
+
                 <h3 className="font-semibold">
                   Suas curtidas
                 </h3>
 
                 <span className="text-sm text-zinc-500">
-                  {likedSongs.length}
+                  {
+                    likedSongs.length
+                  }
                 </span>
+
               </div>
 
               {likedSongs.length ===
               0 ? (
                 <div className="py-12 text-center">
+
                   <div className="text-4xl">
                     🎵
                   </div>
 
                   <p className="mt-3 text-sm text-zinc-400">
-                    Suas músicas curtidas
-                    aparecerão aqui.
+                    Suas músicas curtidas aparecerão aqui.
                   </p>
+
                 </div>
               ) : (
                 <div className="mt-4 space-y-3">
+
                   {likedSongs.map(
                     (song) => (
                       <div
@@ -1746,6 +1646,7 @@ export default function Home() {
                         }
                         className="flex items-center gap-3 rounded-xl bg-zinc-800/70 p-2"
                       >
+
                         <img
                           src={
                             song.thumbnail
@@ -1755,6 +1656,7 @@ export default function Home() {
                         />
 
                         <div className="min-w-0">
+
                           <p className="truncate text-sm font-medium">
                             {
                               song.title
@@ -1774,35 +1676,26 @@ export default function Home() {
                               ]
                             }
                           </p>
+
                         </div>
+
                       </div>
                     )
                   )}
+
                 </div>
               )}
+
             </div>
 
-            {passedSongs.length >
-              0 && (
-              <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
-                <p className="text-xs text-zinc-500">
-                  {passedSongs.length}{" "}
-                  músicas analisadas
-                </p>
-
-                <p className="mt-1 text-xs leading-relaxed text-zinc-600">
-                  Seus Passes também
-                  influenciam as próximas
-                  recomendações.
-                </p>
-              </div>
-            )}
           </aside>
+
         </div>
 
         <footer className="pb-2 text-center text-xs text-zinc-700">
           MusicSwipe • Descoberta musical
         </footer>
+
       </div>
     </main>
   );
